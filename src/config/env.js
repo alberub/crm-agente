@@ -1,0 +1,74 @@
+const path = require("path");
+const dotenv = require("dotenv");
+
+const localEnvPath = path.resolve(process.cwd(), ".env");
+
+dotenv.config({ path: localEnvPath, quiet: true });
+
+function cleanEnvValue(value) {
+  if (typeof value !== "string") {
+    return value;
+  }
+
+  return value.replace(/^'(.*)'$/, "$1").trim();
+}
+
+function readNumber(value, fallback) {
+  const parsedValue = Number(cleanEnvValue(value));
+  return Number.isFinite(parsedValue) ? parsedValue : fallback;
+}
+
+function readOrigins(value) {
+  const rawValue = cleanEnvValue(value);
+
+  if (!rawValue) {
+    return ["http://localhost:5173"];
+  }
+
+  return rawValue
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function validateEnv() {
+  const hasDatabaseUrl = !!cleanEnvValue(process.env.DATABASE_URL);
+  const hasSplitDatabaseConfig =
+    !!cleanEnvValue(process.env.DB_HOST) &&
+    !!cleanEnvValue(process.env.DB_USER) &&
+    !!cleanEnvValue(process.env.DB_PASSWORD) &&
+    !!cleanEnvValue(process.env.DB_NAME);
+
+  if (!hasDatabaseUrl && !hasSplitDatabaseConfig) {
+    throw new Error(
+      "Falta configuracion de base de datos. Usa DATABASE_URL o define HOST, USER, PASSWORD y DATABASE."
+    );
+  }
+
+  if (
+    !cleanEnvValue(process.env.META_ACCESS_TOKEN) ||
+    !cleanEnvValue(process.env.META_PHONE_NUMBER_ID)
+  ) {
+    throw new Error(
+      "Faltan META_ACCESS_TOKEN o META_PHONE_NUMBER_ID para enviar mensajes por WhatsApp."
+    );
+  }
+}
+
+module.exports = {
+  crmPort: readNumber(process.env.CRM_PORT, 3100),
+  corsOrigins: readOrigins(process.env.CRM_CORS_ORIGIN),
+  outboundMessageRole: cleanEnvValue(process.env.CRM_OUTBOUND_ROLE) || "asesor",
+  databaseUrl: cleanEnvValue(process.env.DATABASE_URL),
+  dbHost: cleanEnvValue(process.env.DB_HOST),
+  dbUser: cleanEnvValue(process.env.DB_USER),
+  dbPassword: cleanEnvValue(process.env.DB_PASSWORD),
+  dbName: cleanEnvValue(process.env.DB_NAME),
+  dbPort: readNumber(process.env.DB_PORT, 5432),
+  metaPhoneNumberId: cleanEnvValue(process.env.META_PHONE_NUMBER_ID),
+  metaAccessToken: cleanEnvValue(process.env.META_ACCESS_TOKEN),
+  openAiApiKey: cleanEnvValue(process.env.OPENAI_API_KEY),
+  openAiModel: cleanEnvValue(process.env.OPENAI_MODEL) || "gpt-5-mini",
+  localEnvPath,
+  validateEnv,
+};

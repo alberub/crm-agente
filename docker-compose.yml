@@ -1,0 +1,9 @@
+services:
+  app:
+    build: .
+    container_name: crm-agente-api
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:3100:3100"

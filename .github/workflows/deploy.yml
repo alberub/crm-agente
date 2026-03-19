@@ -1,0 +1,36 @@
+name: Deploy VPS
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script_stop: true
+          script: |
+            cd /var/www/crm-agente
+            git fetch origin master
+            git checkout master
+            git pull --ff-only origin master
+            if [ -f ./deploy.sh ]; then
+              chmod +x ./deploy.sh
+              ./deploy.sh
+            else
+              docker compose up -d --build
+              docker image prune -f
+            fi

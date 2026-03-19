@@ -1,0 +1,123 @@
+const express = require("express");
+const {
+  getInbox,
+  getConversationDetail,
+  getConversationMessages,
+  sendManualReply,
+  changeConversationState,
+  getConversationStates,
+} = require("../services/whatsappInboxService");
+const { AppError } = require("../utils/errors");
+
+const router = express.Router();
+
+router.get("/api/whatsapp/conversations", async (req, res, next) => {
+  try {
+    const activeOnly =
+      req.query.active === undefined
+        ? undefined
+        : String(req.query.active).toLowerCase() === "true";
+
+    const conversations = await getInbox({
+      search: String(req.query.search || ""),
+      activeOnly,
+      limit: req.query.limit,
+    });
+
+    res.status(200).json({ conversations });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/api/whatsapp/conversations/:id", async (req, res, next) => {
+  try {
+    const conversationId = Number(req.params.id);
+
+    if (!Number.isInteger(conversationId) || conversationId <= 0) {
+      throw new AppError("ID de conversacion invalido.", 400);
+    }
+
+    const detail = await getConversationDetail(
+      conversationId,
+      req.query.messageLimit
+    );
+    res.status(200).json(detail);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/api/whatsapp/conversations/:id/messages", async (req, res, next) => {
+  try {
+    const conversationId = Number(req.params.id);
+
+    if (!Number.isInteger(conversationId) || conversationId <= 0) {
+      throw new AppError("ID de conversacion invalido.", 400);
+    }
+
+    const messages = await getConversationMessages(conversationId, req.query.limit);
+    res.status(200).json({ messages });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.patch("/api/whatsapp/conversations/:id/state", async (req, res, next) => {
+  try {
+    const conversationId = Number(req.params.id);
+    const stateName = String(req.body.state || "").trim();
+
+    if (!Number.isInteger(conversationId) || conversationId <= 0) {
+      throw new AppError("ID de conversacion invalido.", 400);
+    }
+
+    if (!stateName) {
+      throw new AppError("Debes enviar un estado de conversacion.", 400);
+    }
+
+    const conversation = await changeConversationState({
+      conversationId,
+      stateName,
+    });
+
+    res.status(200).json({ conversation });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/api/whatsapp/conversations/:id/messages", async (req, res, next) => {
+  try {
+    const conversationId = Number(req.params.id);
+    const body = String(req.body.body || "").trim();
+
+    if (!Number.isInteger(conversationId) || conversationId <= 0) {
+      throw new AppError("ID de conversacion invalido.", 400);
+    }
+
+    if (!body) {
+      throw new AppError("Debes enviar el texto del mensaje.", 400);
+    }
+
+    const response = await sendManualReply({
+      conversationId,
+      body,
+    });
+
+    res.status(201).json(response);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/api/whatsapp/states", async (_req, res, next) => {
+  try {
+    const states = await getConversationStates();
+    res.status(200).json({ states });
+  } catch (error) {
+    next(error);
+  }
+});
+
+module.exports = router;

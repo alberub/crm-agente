@@ -1,0 +1,51 @@
+const db = require("../db");
+
+function mapMessage(row) {
+  return {
+    id: Number(row.id),
+    conversacionId: Number(row.conversacion_id),
+    rol: row.rol,
+    mensaje: row.mensaje,
+    fecha: row.fecha,
+  };
+}
+
+async function listMessagesByConversationId(conversationId, limit = 100) {
+  const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 500);
+
+  const result = await db.query(
+    `
+      SELECT id, conversacion_id, rol, mensaje, fecha
+      FROM public.mensajes
+      WHERE conversacion_id = $1
+      ORDER BY fecha ASC, id ASC
+      LIMIT $2
+    `,
+    [conversationId, safeLimit]
+  );
+
+  return result.rows.map(mapMessage);
+}
+
+async function saveMessage({ conversationId, role, message }) {
+  const result = await db.query(
+    `
+      INSERT INTO public.mensajes (
+        conversacion_id,
+        rol,
+        mensaje,
+        fecha
+      )
+      VALUES ($1, $2, $3, NOW())
+      RETURNING id, conversacion_id, rol, mensaje, fecha
+    `,
+    [conversationId, role, message]
+  );
+
+  return mapMessage(result.rows[0]);
+}
+
+module.exports = {
+  listMessagesByConversationId,
+  saveMessage,
+};
