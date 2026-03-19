@@ -4,6 +4,9 @@ const {
   findConversationById,
   listConversationStates,
   updateConversationState,
+  takeConversationByHuman,
+  resumeConversationByBot,
+  isBotResponseEnabled,
 } = require("../repositories/conversationRepository");
 const {
   listMessagesByConversationId,
@@ -31,6 +34,7 @@ async function getConversationDetail(conversationId, messageLimit) {
 
   return {
     conversation,
+    botEnabled: isBotResponseEnabled(conversation),
     messages,
     latestOrder,
   };
@@ -46,24 +50,38 @@ async function getConversationMessages(conversationId, limit) {
   return listMessagesByConversationId(conversationId, limit);
 }
 
-async function sendManualReply({ conversationId, body }) {
-  const conversation = await findConversationById(conversationId);
+async function sendManualReply({
+  conversationId,
+  body,
+  humanAgentId = null,
+  notifyCustomer = true,
+  takeOver = true,
+}) {
+  const existingConversation = await findConversationById(conversationId);
 
-  if (!conversation) {
+  if (!existingConversation) {
     throw new AppError("Conversacion no encontrada.", 404);
   }
 
-  if (!conversation.telefonoCliente) {
+  if (!existingConversation.telefonoCliente) {
     throw new AppError(
       "La conversacion no tiene telefono asociado para enviar un mensaje.",
       400
     );
   }
 
-  const metaResponse = await sendWhatsAppTextMessage(
-    conversation.telefonoCliente,
-    body
-  );
+  const conversation = takeOver
+    ? await takeConversationByHuman({
+        conversationId,
+        humanAgentId,
+      })
+    : existingConversation;
+
+  let metaResponse = null;
+
+  if (notifyCustomer) {
+    metaResponse = await sendWhatsAppTextMessage(conversation.telefonoCliente, body);
+  }
 
   const storedMessage = await saveMessage({
     conversationId,
@@ -72,6 +90,8 @@ async function sendManualReply({ conversationId, body }) {
   });
 
   return {
+    conversation,
+    botEnabled: isBotResponseEnabled(conversation),
     message: storedMessage,
     meta: metaResponse,
   };
@@ -94,6 +114,35 @@ async function getConversationStates() {
   return listConversationStates();
 }
 
+async function takeOverConversation({ conversationId, humanAgentId = null }) {
+  const conversation = await takeConversationByHuman({
+    conversationId,
+    humanAgentId,
+  });
+
+  if (!conversation) {
+    throw new AppError("Conversacion no encontrada.", 404);
+  }
+
+  return {
+    conversation,
+    botEnabled: isBotResponseEnabled(conversation),
+  };
+}
+
+async function releaseConversation({ conversationId }) {
+  const conversation = await resumeConversationByBot(conversationId);
+
+  if (!conversation) {
+    throw new AppError("Conversacion no encontrada.", 404);
+  }
+
+  return {
+    conversation,
+    botEnabled: isBotResponseEnabled(conversation),
+  };
+}
+
 module.exports = {
   getInbox,
   getConversationDetail,
@@ -101,4 +150,6 @@ module.exports = {
   sendManualReply,
   changeConversationState,
   getConversationStates,
+  takeOverConversation,
+  releaseConversation,
 };

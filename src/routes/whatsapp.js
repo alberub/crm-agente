@@ -6,6 +6,8 @@ const {
   sendManualReply,
   changeConversationState,
   getConversationStates,
+  takeOverConversation,
+  releaseConversation,
 } = require("../services/whatsappInboxService");
 const { AppError } = require("../utils/errors");
 
@@ -87,6 +89,41 @@ router.patch("/api/whatsapp/conversations/:id/state", async (req, res, next) => 
   }
 });
 
+router.post("/api/whatsapp/conversations/:id/takeover", async (req, res, next) => {
+  try {
+    const conversationId = Number(req.params.id);
+
+    if (!Number.isInteger(conversationId) || conversationId <= 0) {
+      throw new AppError("ID de conversacion invalido.", 400);
+    }
+
+    const response = await takeOverConversation({
+      conversationId,
+      humanAgentId: req.body.humanAgentId ?? null,
+    });
+
+    res.status(200).json(response);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/api/whatsapp/conversations/:id/release", async (req, res, next) => {
+  try {
+    const conversationId = Number(req.params.id);
+
+    if (!Number.isInteger(conversationId) || conversationId <= 0) {
+      throw new AppError("ID de conversacion invalido.", 400);
+    }
+
+    const response = await releaseConversation({ conversationId });
+
+    res.status(200).json(response);
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.post("/api/whatsapp/conversations/:id/messages", async (req, res, next) => {
   try {
     const conversationId = Number(req.params.id);
@@ -103,6 +140,9 @@ router.post("/api/whatsapp/conversations/:id/messages", async (req, res, next) =
     const response = await sendManualReply({
       conversationId,
       body,
+      humanAgentId: req.body.humanAgentId ?? null,
+      notifyCustomer: req.body.notifyCustomer !== false,
+      takeOver: req.body.takeOver !== false,
     });
 
     res.status(201).json(response);

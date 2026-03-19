@@ -1,6 +1,9 @@
 const db = require("../db");
 
 function mapConversation(row) {
+  const controlOwner = row.control_owner || "bot";
+  const botPaused = Boolean(row.bot_paused);
+
   return {
     id: Number(row.id),
     clienteId: row.cliente_id ? Number(row.cliente_id) : null,
@@ -11,6 +14,11 @@ function mapConversation(row) {
     categoriaId: row.categoria_id ? Number(row.categoria_id) : null,
     categoriaNombre: row.categoria_nombre || null,
     activa: Boolean(row.activa),
+    controlOwner,
+    humanTakenAt: row.human_taken_at || null,
+    humanAgentId: row.human_agent_id || null,
+    botPaused,
+    botEnabled: controlOwner === "bot" && botPaused === false,
     ultimaInteraccion: row.ultima_interaccion,
     nombreCliente: row.nombre_cliente || null,
     telefonoCliente: row.telefono_cliente || null,
@@ -70,6 +78,10 @@ async function listConversations({ search = "", activeOnly, limit = 50 }) {
         c.intencion_id,
         c.categoria_id,
         c.activa,
+        c.control_owner,
+        c.human_taken_at,
+        c.human_agent_id,
+        c.bot_paused,
         c.ultima_interaccion,
         cl.nombre AS nombre_cliente,
         cl.telefono AS telefono_cliente,
@@ -118,6 +130,10 @@ async function findConversationById(conversationId) {
         c.intencion_id,
         c.categoria_id,
         c.activa,
+        c.control_owner,
+        c.human_taken_at,
+        c.human_agent_id,
+        c.bot_paused,
         c.ultima_interaccion,
         cl.nombre AS nombre_cliente,
         cl.telefono AS telefono_cliente,
@@ -204,9 +220,68 @@ async function updateConversationState({ conversationId, stateName }) {
   return findConversationById(conversationId);
 }
 
+async function takeConversationByHuman({
+  conversationId,
+  humanAgentId = null,
+  pauseBot = true,
+}) {
+  const result = await db.query(
+    `
+      UPDATE public.conversaciones
+      SET control_owner = 'human',
+          human_taken_at = NOW(),
+          human_agent_id = $2,
+          bot_paused = $3,
+          ultima_interaccion = NOW()
+      WHERE id = $1
+      RETURNING id
+    `,
+    [conversationId, humanAgentId, pauseBot]
+  );
+
+  if (result.rows.length === 0) {
+    return null;
+  }
+
+  return findConversationById(conversationId);
+}
+
+async function resumeConversationByBot(conversationId) {
+  const result = await db.query(
+    `
+      UPDATE public.conversaciones
+      SET control_owner = 'bot',
+          human_taken_at = NULL,
+          human_agent_id = NULL,
+          bot_paused = FALSE,
+          ultima_interaccion = NOW()
+      WHERE id = $1
+      RETURNING id
+    `,
+    [conversationId]
+  );
+
+  if (result.rows.length === 0) {
+    return null;
+  }
+
+  return findConversationById(conversationId);
+}
+
+function isBotResponseEnabled(conversation) {
+  return Boolean(
+    conversation &&
+      conversation.controlOwner === "bot" &&
+      conversation.botPaused === false
+  );
+}
+
 module.exports = {
   listConversations,
   findConversationById,
   listConversationStates,
   updateConversationState,
+  takeConversationByHuman,
+  resumeConversationByBot,
+  isBotResponseEnabled,
 };
