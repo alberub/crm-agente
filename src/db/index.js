@@ -1,4 +1,4 @@
-const { Pool } = require("pg");
+const { Client, Pool } = require("pg");
 const {
   databaseUrl,
   dbHost,
@@ -24,7 +24,16 @@ const poolConfig = databaseUrl
 
 const pool = new Pool(poolConfig);
 
+function createClient(overrides = {}) {
+  return new Client({
+    ...poolConfig,
+    ...overrides,
+  });
+}
+
 module.exports = {
   pool,
+  poolConfig,
+  createClient,
   query: (text, params) => pool.query(text, params),
 };

@@ -9,9 +9,35 @@ const {
   takeOverConversation,
   releaseConversation,
 } = require("../services/whatsappInboxService");
+const { addClient } = require("../services/realtimeService");
 const { AppError } = require("../utils/errors");
 
 const router = express.Router();
+
+router.get("/api/whatsapp/stream", (req, res, next) => {
+  try {
+    const rawConversationId = req.query.conversationId;
+    const conversationId =
+      rawConversationId === undefined ? null : Number(rawConversationId);
+
+    if (
+      rawConversationId !== undefined &&
+      (!Number.isInteger(conversationId) || conversationId <= 0)
+    ) {
+      throw new AppError("ID de conversacion invalido.", 400);
+    }
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders?.();
+
+    addClient({ res, conversationId });
+  } catch (error) {
+    next(error);
+  }
+});
 
 router.get("/api/whatsapp/conversations", async (req, res, next) => {
   try {
