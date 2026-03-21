@@ -6,6 +6,7 @@ const {
   sendManualReply,
   changeConversationState,
   getConversationStates,
+  markConversationAsRead,
   takeOverConversation,
   releaseConversation,
 } = require("../services/whatsappInboxService");
@@ -13,6 +14,14 @@ const { addClient } = require("../services/realtimeService");
 const { AppError } = require("../utils/errors");
 
 const router = express.Router();
+
+function readAgentId(req) {
+  const headerAgentId = req.header("x-agent-id");
+  const queryAgentId = req.query.agentId;
+  const bodyAgentId = req.body?.agentId;
+
+  return String(headerAgentId || queryAgentId || bodyAgentId || "").trim() || null;
+}
 
 router.get("/api/whatsapp/stream", (req, res, next) => {
   try {
@@ -47,6 +56,7 @@ router.get("/api/whatsapp/conversations", async (req, res, next) => {
         : String(req.query.active).toLowerCase() === "true";
 
     const conversations = await getInbox({
+      agentId: readAgentId(req),
       search: String(req.query.search || ""),
       activeOnly,
       limit: req.query.limit,
@@ -68,9 +78,30 @@ router.get("/api/whatsapp/conversations/:id", async (req, res, next) => {
 
     const detail = await getConversationDetail(
       conversationId,
-      req.query.messageLimit
+      req.query.messageLimit,
+      readAgentId(req)
     );
     res.status(200).json(detail);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/api/whatsapp/conversations/:id/read", async (req, res, next) => {
+  try {
+    const conversationId = Number(req.params.id);
+
+    if (!Number.isInteger(conversationId) || conversationId <= 0) {
+      throw new AppError("ID de conversacion invalido.", 400);
+    }
+
+    const conversation = await markConversationAsRead({
+      conversationId,
+      agentId: readAgentId(req),
+      lastReadMessageId: req.body.lastReadMessageId ?? null,
+    });
+
+    res.status(200).json({ conversation });
   } catch (error) {
     next(error);
   }

@@ -25,6 +25,8 @@ function mapConversation(row) {
     ultimoMensaje: row.ultimo_mensaje || null,
     ultimoMensajeFecha: row.ultimo_mensaje_fecha || null,
     totalMensajes: Number(row.total_mensajes || 0),
+    hasUnread: Boolean(row.has_unread),
+    unreadCount: Number(row.unread_count || 0),
   };
 }
 
@@ -62,10 +64,12 @@ function buildFilters({ search, activeOnly }) {
   };
 }
 
-async function listConversations({ search = "", activeOnly, limit = 50 }) {
+async function listConversations({ search = "", activeOnly, limit = 50, agentId = null }) {
   const { whereClause, params } = buildFilters({ search, activeOnly });
   const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 200);
 
+  params.push(agentId);
+  const agentIndex = params.length;
   params.push(safeLimit);
 
   const result = await db.query(
@@ -89,7 +93,15 @@ async function listConversations({ search = "", activeOnly, limit = 50 }) {
         cc.tipo_categoria AS categoria_nombre,
         last_message.mensaje AS ultimo_mensaje,
         last_message.fecha AS ultimo_mensaje_fecha,
-        message_totals.total_mensajes
+        message_totals.total_mensajes,
+        CASE
+          WHEN $${agentIndex}::text IS NULL THEN FALSE
+          ELSE COALESCE(unread_totals.unread_count, 0) > 0
+        END AS has_unread,
+        CASE
+          WHEN $${agentIndex}::text IS NULL THEN 0
+          ELSE COALESCE(unread_totals.unread_count, 0)
+        END AS unread_count
       FROM public.conversaciones c
       LEFT JOIN public.clientes_floreria cl
         ON cl.id = c.cliente_id
@@ -109,6 +121,16 @@ async function listConversations({ search = "", activeOnly, limit = 50 }) {
         FROM public.mensajes m
         WHERE m.conversacion_id = c.id
       ) AS message_totals ON TRUE
+      LEFT JOIN public.conversation_reads cr
+        ON cr.conversation_id = c.id
+       AND cr.agent_id = $${agentIndex}
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*) AS unread_count
+        FROM public.mensajes m
+        WHERE m.conversacion_id = c.id
+          AND m.rol = 'user'
+          AND m.id > COALESCE(cr.last_read_message_id, 0)
+      ) AS unread_totals ON TRUE
       ${whereClause}
       ORDER BY c.ultima_interaccion DESC NULLS LAST, c.id DESC
       LIMIT $${params.length}
@@ -119,7 +141,7 @@ async function listConversations({ search = "", activeOnly, limit = 50 }) {
   return result.rows.map(mapConversation);
 }
 
-async function findConversationById(conversationId) {
+async function findConversationById(conversationId, agentId = null) {
   const result = await db.query(
     `
       SELECT
@@ -141,7 +163,15 @@ async function findConversationById(conversationId) {
         cc.tipo_categoria AS categoria_nombre,
         last_message.mensaje AS ultimo_mensaje,
         last_message.fecha AS ultimo_mensaje_fecha,
-        message_totals.total_mensajes
+        message_totals.total_mensajes,
+        CASE
+          WHEN $2::text IS NULL THEN FALSE
+          ELSE COALESCE(unread_totals.unread_count, 0) > 0
+        END AS has_unread,
+        CASE
+          WHEN $2::text IS NULL THEN 0
+          ELSE COALESCE(unread_totals.unread_count, 0)
+        END AS unread_count
       FROM public.conversaciones c
       LEFT JOIN public.clientes_floreria cl
         ON cl.id = c.cliente_id
@@ -161,10 +191,20 @@ async function findConversationById(conversationId) {
         FROM public.mensajes m
         WHERE m.conversacion_id = c.id
       ) AS message_totals ON TRUE
+      LEFT JOIN public.conversation_reads cr
+        ON cr.conversation_id = c.id
+       AND cr.agent_id = $2
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*) AS unread_count
+        FROM public.mensajes m
+        WHERE m.conversacion_id = c.id
+          AND m.rol = 'user'
+          AND m.id > COALESCE(cr.last_read_message_id, 0)
+      ) AS unread_totals ON TRUE
       WHERE c.id = $1
       LIMIT 1
     `,
-    [conversationId]
+    [conversationId, agentId]
   );
 
   if (result.rows.length === 0) {

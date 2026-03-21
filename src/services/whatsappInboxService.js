@@ -9,6 +9,9 @@ const {
   isBotResponseEnabled,
 } = require("../repositories/conversationRepository");
 const {
+  upsertConversationRead,
+} = require("../repositories/conversationReadRepository");
+const {
   listMessagesByConversationId,
   saveMessage,
 } = require("../repositories/messageRepository");
@@ -20,8 +23,8 @@ async function getInbox(filters) {
   return listConversations(filters);
 }
 
-async function getConversationDetail(conversationId, messageLimit) {
-  const conversation = await findConversationById(conversationId);
+async function getConversationDetail(conversationId, messageLimit, agentId = null) {
+  const conversation = await findConversationById(conversationId, agentId);
 
   if (!conversation) {
     throw new AppError("Conversacion no encontrada.", 404);
@@ -48,6 +51,37 @@ async function getConversationMessages(conversationId, limit) {
   }
 
   return listMessagesByConversationId(conversationId, limit);
+}
+
+async function markConversationAsRead({
+  conversationId,
+  agentId,
+  lastReadMessageId = null,
+}) {
+  if (!agentId) {
+    throw new AppError("Falta agentId para registrar lectura.", 400);
+  }
+
+  const conversation = await findConversationById(conversationId, agentId);
+
+  if (!conversation) {
+    throw new AppError("Conversacion no encontrada.", 404);
+  }
+
+  let resolvedLastReadMessageId = lastReadMessageId ? Number(lastReadMessageId) : null;
+
+  if (!resolvedLastReadMessageId) {
+    const messages = await listMessagesByConversationId(conversationId, 1);
+    resolvedLastReadMessageId = messages.at(-1)?.id ?? null;
+  }
+
+  await upsertConversationRead({
+    conversationId,
+    agentId,
+    lastReadMessageId: resolvedLastReadMessageId,
+  });
+
+  return findConversationById(conversationId, agentId);
 }
 
 async function sendManualReply({
@@ -150,6 +184,7 @@ module.exports = {
   sendManualReply,
   changeConversationState,
   getConversationStates,
+  markConversationAsRead,
   takeOverConversation,
   releaseConversation,
 };
