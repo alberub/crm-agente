@@ -30,7 +30,7 @@ function mapConversation(row) {
   };
 }
 
-function buildFilters({ search, activeOnly }) {
+function buildFilters({ search, activeOnly, unreadOnly = false, agentId = null }) {
   const conditions = [];
   const params = [];
 
@@ -58,14 +58,37 @@ function buildFilters({ search, activeOnly }) {
     `);
   }
 
+  if (unreadOnly) {
+    params.push(agentId);
+    const agentIndex = params.length;
+    conditions.push(`
+      EXISTS (
+        SELECT 1
+        FROM public.mensajes unread_message
+        LEFT JOIN public.conversation_reads unread_read
+          ON unread_read.conversation_id = c.id
+         AND unread_read.agent_id = $${agentIndex}
+        WHERE unread_message.conversacion_id = c.id
+          AND unread_message.rol = 'user'
+          AND unread_message.id > COALESCE(unread_read.last_read_message_id, 0)
+      )
+    `);
+  }
+
   return {
     whereClause: conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "",
     params,
   };
 }
 
-async function listConversations({ search = "", activeOnly, limit = 50, agentId = null }) {
-  const { whereClause, params } = buildFilters({ search, activeOnly });
+async function listConversations({
+  search = "",
+  activeOnly,
+  unreadOnly = false,
+  limit = 50,
+  agentId = null,
+}) {
+  const { whereClause, params } = buildFilters({ search, activeOnly, unreadOnly, agentId });
   const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 200);
 
   params.push(agentId);

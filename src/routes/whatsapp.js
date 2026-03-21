@@ -54,11 +54,13 @@ router.get("/api/whatsapp/conversations", async (req, res, next) => {
       req.query.active === undefined
         ? undefined
         : String(req.query.active).toLowerCase() === "true";
+    const unreadOnly = String(req.query.unread || "").toLowerCase() === "true";
 
     const conversations = await getInbox({
       agentId: readAgentId(req),
       search: String(req.query.search || ""),
       activeOnly,
+      unreadOnly,
       limit: req.query.limit,
     });
 
