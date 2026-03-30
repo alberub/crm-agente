@@ -1,0 +1,78 @@
+const SALES_STAGE_CATALOG = [
+  {
+    code: "nuevo_lead",
+    name: "Nuevo lead",
+    sortOrder: 10,
+    isClosedWon: false,
+    isClosedLost: false,
+    description: "Lead recien captado, aun sin calificacion comercial.",
+  },
+  {
+    code: "contactado",
+    name: "Contactado",
+    sortOrder: 20,
+    isClosedWon: false,
+    isClosedLost: false,
+    description: "Ya hubo primer contacto o respuesta inicial.",
+  },
+  {
+    code: "interesado",
+    name: "Interesado",
+    sortOrder: 30,
+    isClosedWon: false,
+    isClosedLost: false,
+    description: "El prospecto mostro interes real o senales claras de compra.",
+  },
+  {
+    code: "cotizacion_enviada",
+    name: "Cotizacion enviada",
+    sortOrder: 40,
+    isClosedWon: false,
+    isClosedLost: false,
+    description: "Ya recibio propuesta, catalogo o precio formal.",
+  },
+  {
+    code: "seguimiento",
+    name: "Seguimiento",
+    sortOrder: 50,
+    isClosedWon: false,
+    isClosedLost: false,
+    description: "El lead necesita recordatorio, respuesta o seguimiento comercial.",
+  },
+  {
+    code: "negociacion",
+    name: "Negociacion",
+    sortOrder: 60,
+    isClosedWon: false,
+    isClosedLost: false,
+    description: "Hay objeciones, ajustes o acuerdos por cerrar.",
+  },
+  {
+    code: "pago_pendiente",
+    name: "Pago pendiente",
+    sortOrder: 70,
+    isClosedWon: false,
+    isClosedLost: false,
+    description: "El cliente ya esta cerca del cierre y solo falta confirmar pago.",
+  },
+  {
+    code: "venta_cerrada",
+    name: "Venta cerrada",
+    sortOrder: 80,
+    isClosedWon: true,
+    isClosedLost: false,
+    description: "La oportunidad se convirtio en venta.",
+  },
+  {
+    code: "perdido",
+    name: "Perdido",
+    sortOrder: 90,
+    isClosedWon: false,
+    isClosedLost: true,
+    description: "La oportunidad no cerro o se descarto.",
+  },
+];
+
+module.exports = {
+  SALES_STAGE_CATALOG,
+};
