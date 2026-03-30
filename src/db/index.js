@@ -1,4 +1,4 @@
-const { Client, Pool } = require("pg");
+const { Client, Pool, types } = require("pg");
 const {
   databaseUrl,
   dbHost,
@@ -21,6 +21,8 @@ const poolConfig = databaseUrl
       port: dbPort,
       connectionTimeoutMillis: 5000,
     };
+
+types.setTypeParser(1114, (value) => value);
 
 const pool = new Pool(poolConfig);
 
