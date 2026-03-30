@@ -1,4 +1,5 @@
 const MONTERREY_OFFSET = "-06:00";
+const MONTERREY_TIME_ZONE = "America/Monterrey";
 
 function pad(value, size = 2) {
   return String(value).padStart(size, "0");
@@ -20,14 +21,32 @@ function serializeDbTimestamp(value) {
       return null;
     }
 
+    const formatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone: MONTERREY_TIME_ZONE,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    });
+    const parts = Object.fromEntries(
+      formatter
+        .formatToParts(value)
+        .filter((part) => part.type !== "literal")
+        .map((part) => [part.type, part.value])
+    );
+    const millisecond = value.getMilliseconds();
+
     return formatDateParts({
-      year: value.getUTCFullYear(),
-      month: value.getUTCMonth() + 1,
-      day: value.getUTCDate(),
-      hour: value.getUTCHours(),
-      minute: value.getUTCMinutes(),
-      second: value.getUTCSeconds(),
-      millisecond: value.getUTCMilliseconds(),
+      year: Number(parts.year),
+      month: Number(parts.month),
+      day: Number(parts.day),
+      hour: Number(parts.hour),
+      minute: Number(parts.minute),
+      second: Number(parts.second),
+      millisecond,
     });
   }
 
