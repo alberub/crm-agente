@@ -16,6 +16,7 @@ const {
   saveMessage,
 } = require("../repositories/messageRepository");
 const { findLatestOrderByConversationId } = require("../repositories/orderRepository");
+const { buildConversationSalesSnapshot } = require("./salesInsightService");
 const { sendWhatsAppTextMessage } = require("./metaService");
 const { AppError } = require("../utils/errors");
 const { serializeDbTimestamp } = require("../utils/datetime");
@@ -65,7 +66,7 @@ function resolveMessageRole(message) {
   return "system";
 }
 
-function buildConversationContext({ conversation, messages, latestOrder }) {
+function buildConversationContext({ conversation, messages, latestOrder, salesSnapshot = null }) {
   const normalizedMessages = Array.isArray(messages) ? messages : [];
   const lastCustomerMessage =
     [...normalizedMessages].reverse().find((message) => resolveMessageRole(message) === "customer") ||
@@ -123,6 +124,7 @@ function buildConversationContext({ conversation, messages, latestOrder }) {
   }
 
   const stageLabel =
+    salesSnapshot?.salesStageCode ||
     conversation.categoriaNombre ||
     conversation.intencionNombre ||
     conversation.estado ||
@@ -152,6 +154,10 @@ function buildConversationContext({ conversation, messages, latestOrder }) {
   } else if (latestOrder.estado && String(latestOrder.estado).toLowerCase().includes("pend")) {
     nextSuggestedAction =
       "Confirmar pago, disponibilidad y ventana de entrega antes de continuar.";
+  }
+
+  if (salesSnapshot?.nextAction) {
+    nextSuggestedAction = salesSnapshot.nextAction;
   }
 
   return {
@@ -192,7 +198,34 @@ function buildConversationContext({ conversation, messages, latestOrder }) {
 }
 
 async function getInbox(filters) {
-  return listConversations(filters);
+  const conversations = await listConversations(filters);
+
+  const enrichedConversations = await Promise.all(
+    conversations.map(async (conversation) => {
+      const [messages, latestOrder] = await Promise.all([
+        listMessagesByConversationId(conversation.id, 16),
+        findLatestOrderByConversationId(conversation.id),
+      ]);
+      const context = buildConversationContext({
+        conversation,
+        messages,
+        latestOrder,
+      });
+      const salesSnapshot = await buildConversationSalesSnapshot({
+        conversation,
+        context,
+        latestOrder,
+        recentMessages: messages,
+      });
+
+      return {
+        ...conversation,
+        ...salesSnapshot,
+      };
+    })
+  );
+
+  return enrichedConversations;
 }
 
 async function getConversationDetail(conversationId, messageLimit, agentId = null) {
@@ -206,9 +239,23 @@ async function getConversationDetail(conversationId, messageLimit, agentId = nul
     listMessagesByConversationId(conversationId, messageLimit),
     findLatestOrderByConversationId(conversationId),
   ]);
+  const preliminaryContext = buildConversationContext({
+    conversation,
+    messages,
+    latestOrder,
+  });
+  const salesSnapshot = await buildConversationSalesSnapshot({
+    conversation,
+    context: preliminaryContext,
+    latestOrder,
+    recentMessages: messages,
+  });
 
   return {
-    conversation,
+    conversation: {
+      ...conversation,
+      ...salesSnapshot,
+    },
     botEnabled: isBotResponseEnabled(conversation),
     messages,
     latestOrder,
@@ -216,6 +263,7 @@ async function getConversationDetail(conversationId, messageLimit, agentId = nul
       conversation,
       messages,
       latestOrder,
+      salesSnapshot,
     }),
   };
 }
