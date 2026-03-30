@@ -1,4 +1,5 @@
 const db = require("../db");
+const { serializeDbTimestamp } = require("../utils/datetime");
 
 async function findLatestOrderByConversationId(conversationId) {
   const result = await db.query(
@@ -38,8 +39,8 @@ async function findLatestOrderByConversationId(conversationId) {
     total: Number(row.total || 0),
     estado: row.estado || null,
     direccionEntrega: row.direccion_entrega || null,
-    fechaCreacion: row.fecha_creacion,
-    fechaEntrega: row.fecha_entrega,
+    fechaCreacion: serializeDbTimestamp(row.fecha_creacion),
+    fechaEntrega: serializeDbTimestamp(row.fecha_entrega),
     horaEntregaInicio: row.hora_entrega_inicio,
     horaEntregaFin: row.hora_entrega_fin,
     estatusEntrega: row.estatus_entrega || null,

@@ -1,4 +1,5 @@
 const db = require("../db");
+const { serializeDbTimestamp } = require("../utils/datetime");
 
 function mapConversation(row) {
   const controlOwner = row.control_owner || "bot";
@@ -15,18 +16,18 @@ function mapConversation(row) {
     categoriaNombre: row.categoria_nombre || null,
     activa: Boolean(row.activa),
     controlOwner,
-    humanTakenAt: row.human_taken_at || null,
     humanAgentId: row.human_agent_id || null,
     botPaused,
     botEnabled: controlOwner === "bot" && botPaused === false,
-    ultimaInteraccion: row.ultima_interaccion,
+    ultimaInteraccion: serializeDbTimestamp(row.ultima_interaccion),
     nombreCliente: row.nombre_cliente || null,
     telefonoCliente: row.telefono_cliente || null,
     ultimoMensaje: row.ultimo_mensaje || null,
-    ultimoMensajeFecha: row.ultimo_mensaje_fecha || null,
+    ultimoMensajeFecha: serializeDbTimestamp(row.ultimo_mensaje_fecha),
     totalMensajes: Number(row.total_mensajes || 0),
     hasUnread: Boolean(row.has_unread),
     unreadCount: Number(row.unread_count || 0),
+    humanTakenAt: serializeDbTimestamp(row.human_taken_at),
   };
 }
 
@@ -274,7 +275,7 @@ async function updateConversationState({ conversationId, stateName }) {
       UPDATE public.conversaciones
       SET estado = $2,
           estado_id = $3,
-          ultima_interaccion = NOW()
+          ultima_interaccion = timezone('America/Monterrey', now())
       WHERE id = $1
     `,
     [conversationId, state.nombre, Number(state.id)]
@@ -292,10 +293,10 @@ async function takeConversationByHuman({
     `
       UPDATE public.conversaciones
       SET control_owner = 'human',
-          human_taken_at = NOW(),
+          human_taken_at = timezone('America/Monterrey', now()),
           human_agent_id = $2,
           bot_paused = $3,
-          ultima_interaccion = NOW()
+          ultima_interaccion = timezone('America/Monterrey', now())
       WHERE id = $1
       RETURNING id
     `,
@@ -317,7 +318,7 @@ async function resumeConversationByBot(conversationId) {
           human_taken_at = NULL,
           human_agent_id = NULL,
           bot_paused = FALSE,
-          ultima_interaccion = NOW()
+          ultima_interaccion = timezone('America/Monterrey', now())
       WHERE id = $1
       RETURNING id
     `,

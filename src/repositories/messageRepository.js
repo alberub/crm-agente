@@ -1,4 +1,5 @@
 const db = require("../db");
+const { serializeDbTimestamp } = require("../utils/datetime");
 
 function mapMessage(row) {
   return {
@@ -6,7 +7,7 @@ function mapMessage(row) {
     conversacionId: Number(row.conversacion_id),
     rol: row.rol,
     mensaje: row.mensaje,
-    fecha: row.fecha,
+    fecha: serializeDbTimestamp(row.fecha),
   };
 }
 
@@ -36,7 +37,7 @@ async function saveMessage({ conversationId, role, message }) {
         mensaje,
         fecha
       )
-      VALUES ($1, $2, $3, NOW())
+      VALUES ($1, $2, $3, timezone('America/Monterrey', now()))
       RETURNING id, conversacion_id, rol, mensaje, fecha
     `,
     [conversationId, role, message]

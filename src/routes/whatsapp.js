@@ -158,7 +158,7 @@ router.post("/api/whatsapp/conversations/:id/takeover", async (req, res, next) =
 
     const response = await takeOverConversation({
       conversationId,
-      humanAgentId: req.body.humanAgentId ?? null,
+      humanAgentId: req.body.humanAgentId ?? readAgentId(req),
     });
 
     res.status(200).json(response);
@@ -187,6 +187,7 @@ router.post("/api/whatsapp/conversations/:id/messages", async (req, res, next) =
   try {
     const conversationId = Number(req.params.id);
     const body = String(req.body.body || "").trim();
+    const agentId = readAgentId(req);
 
     if (!Number.isInteger(conversationId) || conversationId <= 0) {
       throw new AppError("ID de conversacion invalido.", 400);
@@ -199,9 +200,10 @@ router.post("/api/whatsapp/conversations/:id/messages", async (req, res, next) =
     const response = await sendManualReply({
       conversationId,
       body,
-      humanAgentId: req.body.humanAgentId ?? null,
+      humanAgentId: req.body.humanAgentId ?? agentId,
       notifyCustomer: req.body.notifyCustomer !== false,
       takeOver: req.body.takeOver !== false,
+      agentId,
     });
 
     res.status(201).json(response);
