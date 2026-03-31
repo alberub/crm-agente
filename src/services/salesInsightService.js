@@ -8,6 +8,16 @@ function normalize(value) {
     .trim();
 }
 
+function hasPurchaseConfirmationText(value) {
+  const normalized = normalize(value);
+
+  return (
+    normalized.includes("gracias por tu compra") ||
+    normalized.includes("tu pedido ha sido registrado correctamente") ||
+    normalized.includes("tu pedido ya quedo confirmado")
+  );
+}
+
 function resolveSalesStageCode({ conversation, latestOrder, userCorpus, botCorpus }) {
   const state = normalize(conversation?.estado);
   const orderState = normalize(latestOrder?.estado);
@@ -18,9 +28,8 @@ function resolveSalesStageCode({ conversation, latestOrder, userCorpus, botCorpu
     state.includes("pedido_confirmado") ||
     state.includes("compra_completada") ||
     state.includes("pago_confirmado") ||
-    botCorpus.includes("gracias por tu compra") ||
-    botCorpus.includes("tu pedido ha sido registrado correctamente") ||
-    botCorpus.includes("tu pedido ya quedo confirmado")
+    hasPurchaseConfirmationText(botCorpus) ||
+    hasPurchaseConfirmationText(conversation?.ultimoMensaje)
   ) {
     return "venta_cerrada";
   }
@@ -90,6 +99,7 @@ function scoreMessages({ conversation, context, latestOrder, recentMessages }) {
   const userCorpus = userMessages.join(" ");
   const botCorpus = botMessages.join(" ");
   const latestUserMessage = userMessages.at(-1) || "";
+  const latestPreview = normalize(conversation?.ultimoMensaje);
   const reasons = [];
   const objections = [];
   let score = 20;
@@ -160,6 +170,11 @@ function scoreMessages({ conversation, context, latestOrder, recentMessages }) {
   ) {
     score += 10;
     pushReason(reasons, "el ultimo mensaje sugiere avance positivo");
+  }
+
+  if (hasPurchaseConfirmationText(botCorpus) || hasPurchaseConfirmationText(latestPreview)) {
+    score = 95;
+    pushReason(reasons, "ya existe confirmacion explicita de compra");
   }
 
   if (context?.timing?.pendingHumanReply) {
