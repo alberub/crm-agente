@@ -28,6 +28,43 @@ function mapConversation(row) {
     hasUnread: Boolean(row.has_unread),
     unreadCount: Number(row.unread_count || 0),
     humanTakenAt: serializeDbTimestamp(row.human_taken_at),
+    leadId: row.lead_id ? Number(row.lead_id) : null,
+    leadPriority: row.lead_priority || null,
+    leadStatus: row.lead_status || null,
+    nextFollowupAt: serializeDbTimestamp(row.lead_next_followup_at),
+    ownerExternalRef: row.lead_owner_external_ref || null,
+    ownerName: row.lead_owner_name || null,
+    salesStageCode: row.sales_stage_code || null,
+    salesStageName: row.sales_stage_name || null,
+    nextAction: row.lead_next_action || null,
+    estimatedValue:
+      row.lead_estimated_value === null || row.lead_estimated_value === undefined
+        ? null
+        : Number(row.lead_estimated_value),
+    aiScore:
+      row.lead_ai_score === null || row.lead_ai_score === undefined
+        ? null
+        : Number(row.lead_ai_score),
+    aiScoreReasons: Array.isArray(row.lead_ai_score_reasons_json)
+      ? row.lead_ai_score_reasons_json
+      : (() => {
+          try {
+            const parsed = JSON.parse(row.lead_ai_score_reasons_json || "[]");
+            return Array.isArray(parsed) ? parsed : [];
+          } catch (_error) {
+            return [];
+          }
+        })(),
+    objections: Array.isArray(row.lead_objections_json)
+      ? row.lead_objections_json
+      : (() => {
+          try {
+            const parsed = JSON.parse(row.lead_objections_json || "[]");
+            return Array.isArray(parsed) ? parsed : [];
+          } catch (_error) {
+            return [];
+          }
+        })(),
   };
 }
 
@@ -118,6 +155,19 @@ async function listConversations({
         last_message.mensaje AS ultimo_mensaje,
         last_message.fecha AS ultimo_mensaje_fecha,
         message_totals.total_mensajes,
+        l.id AS lead_id,
+        l.priority AS lead_priority,
+        l.status AS lead_status,
+        l.next_followup_at AS lead_next_followup_at,
+        l.next_action AS lead_next_action,
+        l.estimated_value AS lead_estimated_value,
+        l.ai_score AS lead_ai_score,
+        l.ai_score_reasons_json AS lead_ai_score_reasons_json,
+        l.objections_json AS lead_objections_json,
+        ss.code AS sales_stage_code,
+        ss.name AS sales_stage_name,
+        owner.external_ref AS lead_owner_external_ref,
+        owner.full_name AS lead_owner_name,
         CASE
           WHEN $${agentIndex}::text IS NULL THEN FALSE
           ELSE COALESCE(unread_totals.unread_count, 0) > 0
@@ -148,6 +198,12 @@ async function listConversations({
       LEFT JOIN public.conversation_reads cr
         ON cr.conversation_id = c.id
        AND cr.agent_id = $${agentIndex}
+      LEFT JOIN public.lead l
+        ON l.conversation_id = c.id
+      LEFT JOIN public.sales_stage ss
+        ON ss.id = l.sales_stage_id
+      LEFT JOIN public.crm_user owner
+        ON owner.id = l.owner_user_id
       LEFT JOIN LATERAL (
         SELECT COUNT(*) AS unread_count
         FROM public.mensajes m
@@ -188,6 +244,19 @@ async function findConversationById(conversationId, agentId = null) {
         last_message.mensaje AS ultimo_mensaje,
         last_message.fecha AS ultimo_mensaje_fecha,
         message_totals.total_mensajes,
+        l.id AS lead_id,
+        l.priority AS lead_priority,
+        l.status AS lead_status,
+        l.next_followup_at AS lead_next_followup_at,
+        l.next_action AS lead_next_action,
+        l.estimated_value AS lead_estimated_value,
+        l.ai_score AS lead_ai_score,
+        l.ai_score_reasons_json AS lead_ai_score_reasons_json,
+        l.objections_json AS lead_objections_json,
+        ss.code AS sales_stage_code,
+        ss.name AS sales_stage_name,
+        owner.external_ref AS lead_owner_external_ref,
+        owner.full_name AS lead_owner_name,
         CASE
           WHEN $2::text IS NULL THEN FALSE
           ELSE COALESCE(unread_totals.unread_count, 0) > 0
@@ -218,6 +287,12 @@ async function findConversationById(conversationId, agentId = null) {
       LEFT JOIN public.conversation_reads cr
         ON cr.conversation_id = c.id
        AND cr.agent_id = $2
+      LEFT JOIN public.lead l
+        ON l.conversation_id = c.id
+      LEFT JOIN public.sales_stage ss
+        ON ss.id = l.sales_stage_id
+      LEFT JOIN public.crm_user owner
+        ON owner.id = l.owner_user_id
       LEFT JOIN LATERAL (
         SELECT COUNT(*) AS unread_count
         FROM public.mensajes m
