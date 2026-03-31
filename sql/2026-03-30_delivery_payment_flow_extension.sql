@@ -1,6 +1,7 @@
 BEGIN;
 
 ALTER TABLE public.pedidos
+  ADD COLUMN IF NOT EXISTS tipo_entrega TEXT NULL,
   ADD COLUMN IF NOT EXISTS metodo_pago TEXT NULL,
   ADD COLUMN IF NOT EXISTS estado_pago TEXT NULL,
   ADD COLUMN IF NOT EXISTS comprobante_pago_url TEXT NULL,
@@ -25,8 +26,10 @@ SET
     WHEN LOWER(COALESCE(estado, '')) LIKE '%pag%' OR LOWER(COALESCE(estado, '')) LIKE '%confirm%' THEN COALESCE(estado_pago, 'confirmado')
     ELSE COALESCE(estado_pago, 'pendiente')
   END,
+  tipo_entrega = COALESCE(tipo_entrega, 'domicilio'),
   metodo_pago = COALESCE(metodo_pago, 'transferencia')
-WHERE metodo_pago IS NULL
+WHERE tipo_entrega IS NULL
+   OR metodo_pago IS NULL
    OR estado_pago IS NULL;
 
 INSERT INTO public.sales_stage (code, name, sort_order, is_closed_won, is_closed_lost)

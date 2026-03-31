@@ -41,6 +41,29 @@ function normalizePaymentMethod(value) {
   return normalized;
 }
 
+function normalizeDeliveryType(value) {
+  const normalized = normalize(value);
+
+  if (
+    normalized.includes("sucursal") ||
+    normalized.includes("pickup") ||
+    normalized.includes("recoger") ||
+    normalized.includes("recoleccion")
+  ) {
+    return "sucursal";
+  }
+
+  if (
+    normalized.includes("domicilio") ||
+    normalized.includes("entrega") ||
+    normalized.includes("envio")
+  ) {
+    return "domicilio";
+  }
+
+  return normalized;
+}
+
 function normalizePaymentStatus(value, latestOrder) {
   const normalized = normalize(value);
 
@@ -60,6 +83,7 @@ function normalizeDeliveryStatus(latestOrder) {
 function resolveSalesStageCode({ conversation, latestOrder, userCorpus, botCorpus }) {
   const state = normalize(conversation?.estado);
   const orderState = normalize(latestOrder?.estado);
+  const deliveryType = normalizeDeliveryType(latestOrder?.tipoEntrega);
   const paymentMethod = normalizePaymentMethod(latestOrder?.metodoPago);
   const paymentStatus = normalizePaymentStatus(latestOrder?.estadoPago, latestOrder);
   const deliveryStatus = normalizeDeliveryStatus(latestOrder);
@@ -125,7 +149,9 @@ function resolveSalesStageCode({ conversation, latestOrder, userCorpus, botCorpu
     hasPurchaseConfirmationText(botCorpus) ||
     hasPurchaseConfirmationText(conversation?.ultimoMensaje)
   ) {
-    return paymentMethod === "contraentrega" ? "pedido_confirmado" : "esperando_confirmacion";
+    return deliveryType === "domicilio" && paymentMethod === "contraentrega"
+      ? "pedido_confirmado"
+      : "esperando_confirmacion";
   }
 
   if (state.includes("cancelado") || state.includes("perdido")) {
@@ -176,6 +202,7 @@ function scoreMessages({ conversation, context, latestOrder, recentMessages }) {
   const botCorpus = botMessages.join(" ");
   const latestUserMessage = userMessages.at(-1) || "";
   const latestPreview = normalize(conversation?.ultimoMensaje);
+  const deliveryType = normalizeDeliveryType(latestOrder?.tipoEntrega);
   const paymentMethod = normalizePaymentMethod(latestOrder?.metodoPago);
   const paymentStatus = normalizePaymentStatus(latestOrder?.estadoPago, latestOrder);
   const deliveryStatus = normalizeDeliveryStatus(latestOrder);
@@ -266,7 +293,7 @@ function scoreMessages({ conversation, context, latestOrder, recentMessages }) {
     pushReason(reasons, "hay mensajes pendientes de atender");
   }
 
-  if (paymentMethod === "contraentrega") {
+  if (deliveryType === "domicilio" && paymentMethod === "contraentrega") {
     score += 8;
     pushReason(reasons, "acepta pago contraentrega");
   }
@@ -352,7 +379,11 @@ function scoreMessages({ conversation, context, latestOrder, recentMessages }) {
     pushObjection(objections, "falta comprobante de pago");
   }
 
-  if (paymentMethod === "contraentrega" && !latestOrder?.direccionValidada) {
+  if (
+    deliveryType === "domicilio" &&
+    paymentMethod === "contraentrega" &&
+    !latestOrder?.direccionValidada
+  ) {
     pushObjection(objections, "falta validar direccion para contraentrega");
   }
 
@@ -376,7 +407,9 @@ function scoreMessages({ conversation, context, latestOrder, recentMessages }) {
     nextAction = "Validar el comprobante y avisar al cliente apenas el pago quede confirmado.";
   } else if (salesStageCode === "pedido_confirmado") {
     nextAction =
-      paymentMethod === "contraentrega"
+      deliveryType === "sucursal"
+        ? "Confirmar sucursal, horario de recoleccion y pago antes de cerrar el caso."
+        : paymentMethod === "contraentrega"
         ? "Confirmar direccion, horario y monto a cobrar al recibir."
         : "Pasar el pedido a preparacion y asegurar trazabilidad de entrega.";
   } else if (salesStageCode === "preparando_entrega") {
