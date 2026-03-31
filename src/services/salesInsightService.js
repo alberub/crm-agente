@@ -104,6 +104,32 @@ function resolveSalesStageCode({ conversation, latestOrder, userCorpus, botCorpu
     return "preparando_entrega";
   }
 
+  // Respect explicit CRM/manual conversation states before falling back
+  // to softer inference from message text.
+  if (includesAny(state, ["entregado", "entrega_completada", "completado", "recogido"])) {
+    return "entregado";
+  }
+
+  if (includesAny(state, ["en_ruta", "en ruta", "camino"])) {
+    return "en_ruta";
+  }
+
+  if (includesAny(state, ["preparando_entrega", "preparacion", "alistando", "pendiente_recoleccion", "listo_para_recoger"])) {
+    return "preparando_entrega";
+  }
+
+  if (includesAny(state, ["pedido_confirmado", "pago_confirmado", "compra_completada"])) {
+    return "pedido_confirmado";
+  }
+
+  if (includesAny(state, ["validando_pago", "pago_en_revision", "pago_reportado"])) {
+    return "validando_pago";
+  }
+
+  if (includesAny(state, ["pendiente_comprobante", "pago_pendiente", "pendiente_pago"])) {
+    return "pendiente_comprobante";
+  }
+
   if (
     includesAny(paymentStatus, ["confirmado", "validado", "cobrado_al_entregar"]) ||
     includesAny(orderState, ["confirmado", "pagado"]) ||
