@@ -8,7 +8,7 @@ function normalize(value) {
     .trim();
 }
 
-function resolveSalesStageCode({ conversation, latestOrder, userCorpus }) {
+function resolveSalesStageCode({ conversation, latestOrder, userCorpus, botCorpus }) {
   const state = normalize(conversation?.estado);
   const orderState = normalize(latestOrder?.estado);
 
@@ -17,7 +17,10 @@ function resolveSalesStageCode({ conversation, latestOrder, userCorpus }) {
     orderState.includes("pag") ||
     state.includes("pedido_confirmado") ||
     state.includes("compra_completada") ||
-    state.includes("pago_confirmado")
+    state.includes("pago_confirmado") ||
+    botCorpus.includes("gracias por tu compra") ||
+    botCorpus.includes("tu pedido ha sido registrado correctamente") ||
+    botCorpus.includes("tu pedido ya quedo confirmado")
   ) {
     return "venta_cerrada";
   }
@@ -81,7 +84,11 @@ function scoreMessages({ conversation, context, latestOrder, recentMessages }) {
   const userMessages = (recentMessages || [])
     .filter((message) => normalize(message.rol) === "user")
     .map((message) => normalize(message.mensaje));
+  const botMessages = (recentMessages || [])
+    .filter((message) => normalize(message.rol) === "bot")
+    .map((message) => normalize(message.mensaje));
   const userCorpus = userMessages.join(" ");
+  const botCorpus = botMessages.join(" ");
   const latestUserMessage = userMessages.at(-1) || "";
   const reasons = [];
   const objections = [];
@@ -197,11 +204,14 @@ function scoreMessages({ conversation, context, latestOrder, recentMessages }) {
     conversation,
     latestOrder,
     userCorpus,
+    botCorpus,
   });
 
   if (salesStageCode === "venta_cerrada") {
     score = 95;
     pushReason(reasons, "venta practicamente cerrada");
+    pushReason(reasons, "ya existe confirmacion explicita de compra");
+    objections.length = 0;
   } else if (salesStageCode === "seguimiento") {
     score += 10;
     pushReason(reasons, "ya esta en seguimiento comercial");
@@ -227,7 +237,7 @@ function scoreMessages({ conversation, context, latestOrder, recentMessages }) {
   } else if (salesStageCode === "cotizacion_enviada") {
     nextAction = "Dar seguimiento a la propuesta y resolver objeciones para cerrar.";
   } else if (salesStageCode === "venta_cerrada") {
-    nextAction = "Mantener seguimiento postventa y abrir puerta a recompra.";
+    nextAction = "Pasar a postventa: compartir seguimiento, confirmar entrega y abrir oportunidad de recompra.";
   } else if (objections.length) {
     nextAction = "Responder objeciones puntuales y recuperar impulso comercial.";
   }
