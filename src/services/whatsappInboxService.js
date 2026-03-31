@@ -6,6 +6,7 @@ const {
   updateConversationState,
   takeConversationByHuman,
   resumeConversationByBot,
+  syncConversationStateIfExists,
   isBotResponseEnabled,
 } = require("../repositories/conversationRepository");
 const {
@@ -217,9 +218,14 @@ async function getInbox(filters) {
         latestOrder,
         recentMessages: messages,
       });
+      const syncedConversation =
+        (await syncConversationStateIfExists({
+          conversationId: conversation.id,
+          stateName: salesSnapshot.salesStageCode,
+        })) || conversation;
 
       return {
-        ...conversation,
+        ...syncedConversation,
         ...salesSnapshot,
       };
     })
@@ -229,7 +235,7 @@ async function getInbox(filters) {
 }
 
 async function getConversationDetail(conversationId, messageLimit, agentId = null) {
-  const conversation = await findConversationById(conversationId, agentId);
+  let conversation = await findConversationById(conversationId, agentId);
 
   if (!conversation) {
     throw new AppError("Conversacion no encontrada.", 404);
@@ -250,6 +256,11 @@ async function getConversationDetail(conversationId, messageLimit, agentId = nul
     latestOrder,
     recentMessages: messages,
   });
+  conversation =
+    (await syncConversationStateIfExists({
+      conversationId: conversation.id,
+      stateName: salesSnapshot.salesStageCode,
+    })) || conversation;
 
   return {
     conversation: {

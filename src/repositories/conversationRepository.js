@@ -284,6 +284,44 @@ async function updateConversationState({ conversationId, stateName }) {
   return findConversationById(conversationId);
 }
 
+async function syncConversationStateIfExists({ conversationId, stateName }) {
+  if (!stateName) {
+    return null;
+  }
+
+  const stateResult = await db.query(
+    `
+      SELECT id, nombre
+      FROM public.cat_estados_conversacion
+      WHERE nombre = $1
+      LIMIT 1
+    `,
+    [stateName]
+  );
+
+  if (stateResult.rows.length === 0) {
+    return null;
+  }
+
+  const state = stateResult.rows[0];
+
+  await db.query(
+    `
+      UPDATE public.conversaciones
+      SET estado = $2,
+          estado_id = $3
+      WHERE id = $1
+        AND (
+          COALESCE(estado, '') <> $2
+          OR COALESCE(estado_id, 0) <> $3
+        )
+    `,
+    [conversationId, state.nombre, Number(state.id)]
+  );
+
+  return findConversationById(conversationId);
+}
+
 async function takeConversationByHuman({
   conversationId,
   humanAgentId = null,
@@ -347,5 +385,6 @@ module.exports = {
   updateConversationState,
   takeConversationByHuman,
   resumeConversationByBot,
+  syncConversationStateIfExists,
   isBotResponseEnabled,
 };
