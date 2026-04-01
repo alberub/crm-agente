@@ -1031,6 +1031,145 @@ async function getPipelineSummary() {
   };
 }
 
+async function getDashboardSummary({ rangeDays = 30 } = {}) {
+  const safeRangeDays = Math.min(Math.max(Number(rangeDays) || 30, 1), 365);
+
+  const [baseResult, ownerResult, firstResponseResult] = await Promise.all([
+    db.query(
+      `
+        WITH stage_map AS (
+          SELECT id, is_closed_won, is_closed_lost
+          FROM public.sales_stage
+        )
+        SELECT
+          COUNT(*) FILTER (
+            WHERE l.created_at >= NOW() - ($1::int || ' days')::interval
+          )::bigint AS leads_new,
+          COUNT(*) FILTER (
+            WHERE COALESCE(l.status, 'active') = 'active'
+          )::bigint AS leads_active,
+          COUNT(*) FILTER (
+            WHERE l.next_followup_at IS NOT NULL
+              AND l.next_followup_at <= NOW()
+              AND COALESCE(l.status, 'active') = 'active'
+          )::bigint AS leads_followup_overdue,
+          COALESCE(SUM(l.estimated_value) FILTER (
+            WHERE sm.is_closed_won IS NOT TRUE
+              AND sm.is_closed_lost IS NOT TRUE
+              AND COALESCE(l.status, 'active') <> 'archived'
+          ), 0)::numeric(14,2) AS open_value,
+          COALESCE(SUM(l.estimated_value) FILTER (
+            WHERE sm.is_closed_won IS TRUE
+          ), 0)::numeric(14,2) AS won_value,
+          COALESCE(SUM(l.estimated_value) FILTER (
+            WHERE sm.is_closed_lost IS TRUE
+          ), 0)::numeric(14,2) AS lost_value,
+          COUNT(*) FILTER (WHERE sm.is_closed_won IS TRUE)::bigint AS won_count,
+          COUNT(*) FILTER (
+            WHERE sm.is_closed_won IS TRUE OR sm.is_closed_lost IS TRUE
+          )::bigint AS closed_count
+        FROM public.lead l
+        LEFT JOIN stage_map sm
+          ON sm.id = l.sales_stage_id
+      `,
+      [safeRangeDays]
+    ),
+    db.query(
+      `
+        SELECT
+          COALESCE(owner.full_name, owner.external_ref, 'Sin responsable') AS owner_name,
+          COUNT(*)::bigint AS lead_count,
+          COALESCE(SUM(l.estimated_value), 0)::numeric(14,2) AS estimated_total,
+          COUNT(*) FILTER (WHERE ss.is_closed_won IS TRUE)::bigint AS won_count
+        FROM public.lead l
+        LEFT JOIN public.crm_user owner
+          ON owner.id = l.owner_user_id
+        LEFT JOIN public.sales_stage ss
+          ON ss.id = l.sales_stage_id
+        WHERE COALESCE(l.status, 'active') <> 'archived'
+        GROUP BY COALESCE(owner.full_name, owner.external_ref, 'Sin responsable')
+        ORDER BY won_count DESC, estimated_total DESC, owner_name ASC
+        LIMIT 20
+      `
+    ),
+    db.query(
+      `
+        WITH lead_window AS (
+          SELECT
+            l.id AS lead_id,
+            l.conversation_id
+          FROM public.lead l
+          WHERE l.created_at >= NOW() - ($1::int || ' days')::interval
+        ),
+        first_incoming AS (
+          SELECT
+            lw.lead_id,
+            MIN(m.fecha) AS first_incoming_at
+          FROM lead_window lw
+          INNER JOIN public.mensajes m
+            ON m.conversacion_id = lw.conversation_id
+          WHERE LOWER(COALESCE(m.rol, '')) = 'user'
+          GROUP BY lw.lead_id
+        ),
+        first_reply AS (
+          SELECT
+            fi.lead_id,
+            MIN(m.fecha) AS first_reply_at
+          FROM first_incoming fi
+          INNER JOIN lead_window lw
+            ON lw.lead_id = fi.lead_id
+          INNER JOIN public.mensajes m
+            ON m.conversacion_id = lw.conversation_id
+          WHERE m.fecha >= fi.first_incoming_at
+            AND LOWER(COALESCE(m.rol, '')) <> 'user'
+          GROUP BY fi.lead_id
+        )
+        SELECT
+          ROUND(AVG(EXTRACT(EPOCH FROM (fr.first_reply_at - fi.first_incoming_at)) / 60.0)::numeric, 2)
+            AS avg_first_response_minutes
+        FROM first_incoming fi
+        INNER JOIN first_reply fr
+          ON fr.lead_id = fi.lead_id
+      `,
+      [safeRangeDays]
+    ),
+  ]);
+
+  const base = baseResult.rows[0] || {};
+  const conversionRate =
+    Number(base.closed_count || 0) > 0
+      ? (Number(base.won_count || 0) / Number(base.closed_count || 0)) * 100
+      : 0;
+
+  return {
+    rangeDays: safeRangeDays,
+    leads: {
+      new: Number(base.leads_new || 0),
+      active: Number(base.leads_active || 0),
+      followupOverdue: Number(base.leads_followup_overdue || 0),
+    },
+    value: {
+      open: Number(base.open_value || 0),
+      won: Number(base.won_value || 0),
+      lost: Number(base.lost_value || 0),
+    },
+    conversion: {
+      wonCount: Number(base.won_count || 0),
+      closedCount: Number(base.closed_count || 0),
+      rate: Number(conversionRate.toFixed(2)),
+    },
+    salesByOwner: ownerResult.rows.map((row) => ({
+      ownerName: row.owner_name,
+      leadCount: Number(row.lead_count || 0),
+      estimatedTotal: Number(row.estimated_total || 0),
+      wonCount: Number(row.won_count || 0),
+    })),
+    firstResponse: {
+      averageMinutes: Number(firstResponseResult.rows[0]?.avg_first_response_minutes || 0),
+    },
+  };
+}
+
 async function upsertLeadSalesSignals({
   conversationId,
   contactId = null,
@@ -1141,4 +1280,5 @@ module.exports = {
   listPaymentLinks,
   listLeadTimeline,
   getPipelineSummary,
+  getDashboardSummary,
 };
