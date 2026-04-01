@@ -22,6 +22,46 @@ function toNumberOrNull(value) {
   return value === null || value === undefined ? null : Number(value);
 }
 
+function mapLeadTaskRow(row) {
+  return {
+    id: Number(row.id),
+    leadId: Number(row.lead_id),
+    assignedTo: row.assigned_to
+      ? {
+          id: Number(row.assigned_to),
+          externalRef: row.assigned_to_external_ref || null,
+          fullName: row.assigned_to_name || null,
+        }
+      : null,
+    title: row.title,
+    description: row.description || null,
+    dueAt: serializeDbTimestamp(row.due_at),
+    status: row.status,
+    createdBy: row.created_by ? Number(row.created_by) : null,
+    createdAt: serializeDbTimestamp(row.created_at),
+    updatedAt: serializeDbTimestamp(row.updated_at),
+  };
+}
+
+function taskAuditPayload(task) {
+  if (!task) {
+    return null;
+  }
+
+  return {
+    id: task.id,
+    lead_id: task.leadId,
+    assigned_to: task.assignedTo?.id ?? null,
+    title: task.title,
+    description: task.description,
+    due_at: task.dueAt,
+    status: task.status,
+    created_by: task.createdBy,
+    created_at: task.createdAt,
+    updated_at: task.updatedAt,
+  };
+}
+
 function mapLeadRow(row) {
   return {
     id: Number(row.lead_id),
@@ -640,24 +680,228 @@ async function listLeadTasks(leadId) {
     [leadId]
   );
 
+  return result.rows.map(mapLeadTaskRow);
+}
+
+async function listTasks({
+  status = null,
+  dueBucket = null,
+  ownerExternalRef = null,
+  limit = 150,
+}) {
+  const safeLimit = Math.min(Math.max(Number(limit) || 150, 1), 300);
+  const params = [];
+  const conditions = [];
+
+  if (status) {
+    params.push(String(status).trim());
+    conditions.push(`t.status = $${params.length}`);
+  }
+
+  if (ownerExternalRef) {
+    params.push(String(ownerExternalRef).trim());
+    conditions.push(`assignee.external_ref = $${params.length}`);
+  }
+
+  if (dueBucket === "overdue") {
+    conditions.push(`t.status <> 'completed' AND t.due_at IS NOT NULL AND t.due_at < NOW()`);
+  }
+
+  if (dueBucket === "today") {
+    conditions.push(`t.status <> 'completed' AND t.due_at IS NOT NULL AND t.due_at >= DATE_TRUNC('day', NOW()) AND t.due_at < DATE_TRUNC('day', NOW()) + INTERVAL '1 day'`);
+  }
+
+  if (dueBucket === "upcoming") {
+    conditions.push(`t.status <> 'completed' AND t.due_at >= DATE_TRUNC('day', NOW()) + INTERVAL '1 day'`);
+  }
+
+  if (dueBucket === "no_due") {
+    conditions.push(`t.due_at IS NULL`);
+  }
+
+  params.push(safeLimit);
+  const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+  const result = await db.query(
+    `
+      SELECT
+        t.id,
+        t.lead_id,
+        t.assigned_to,
+        t.title,
+        t.description,
+        t.due_at,
+        t.status,
+        t.created_by,
+        t.created_at,
+        t.updated_at,
+        assignee.external_ref AS assigned_to_external_ref,
+        assignee.full_name AS assigned_to_name,
+        l.conversation_id,
+        l.estimated_value,
+        l.next_action,
+        l.next_followup_at,
+        ss.id AS sales_stage_id,
+        ss.code AS sales_stage_code,
+        ss.name AS sales_stage_name,
+        ss.sort_order AS sales_stage_sort_order,
+        ss.is_closed_won AS sales_stage_closed_won,
+        ss.is_closed_lost AS sales_stage_closed_lost,
+        cl.nombre AS contact_name,
+        cl.telefono AS contact_phone
+      FROM public.lead_task t
+      INNER JOIN public.lead l
+        ON l.id = t.lead_id
+      LEFT JOIN public.crm_user assignee
+        ON assignee.id = t.assigned_to
+      LEFT JOIN public.sales_stage ss
+        ON ss.id = l.sales_stage_id
+      LEFT JOIN public.clientes_floreria cl
+        ON cl.id = l.contact_id
+      ${whereClause}
+      ORDER BY
+        CASE
+          WHEN t.status = 'completed' THEN 2
+          WHEN t.due_at IS NULL THEN 1
+          ELSE 0
+        END ASC,
+        t.due_at ASC NULLS LAST,
+        t.created_at DESC,
+        t.id DESC
+      LIMIT $${params.length}
+    `,
+    params
+  );
+
   return result.rows.map((row) => ({
-    id: Number(row.id),
-    leadId: Number(row.lead_id),
-    assignedTo: row.assigned_to
-      ? {
-          id: Number(row.assigned_to),
-          externalRef: row.assigned_to_external_ref || null,
-          fullName: row.assigned_to_name || null,
-        }
-      : null,
-    title: row.title,
-    description: row.description || null,
-    dueAt: serializeDbTimestamp(row.due_at),
-    status: row.status,
-    createdBy: row.created_by ? Number(row.created_by) : null,
-    createdAt: serializeDbTimestamp(row.created_at),
-    updatedAt: serializeDbTimestamp(row.updated_at),
+    ...mapLeadTaskRow(row),
+    lead: {
+      id: Number(row.lead_id),
+      conversationId: Number(row.conversation_id),
+      estimatedValue: row.estimated_value === null ? null : Number(row.estimated_value),
+      nextAction: row.next_action || null,
+      nextFollowupAt: serializeDbTimestamp(row.next_followup_at),
+      contactName: row.contact_name || null,
+      contactPhone: row.contact_phone || null,
+      salesStage: row.sales_stage_id
+        ? {
+            id: Number(row.sales_stage_id),
+            code: row.sales_stage_code || null,
+            name: row.sales_stage_name || null,
+            sortOrder: Number(row.sales_stage_sort_order || 0),
+            isClosedWon: Boolean(row.sales_stage_closed_won),
+            isClosedLost: Boolean(row.sales_stage_closed_lost),
+          }
+        : null,
+    },
   }));
+}
+
+async function updateTask({
+  taskId,
+  patch,
+  actorRef = null,
+}) {
+  const currentResult = await db.query(
+    `
+      SELECT
+        t.id,
+        t.lead_id,
+        t.assigned_to,
+        t.title,
+        t.description,
+        t.due_at,
+        t.status,
+        t.created_by,
+        t.created_at,
+        t.updated_at,
+        assignee.external_ref AS assigned_to_external_ref,
+        assignee.full_name AS assigned_to_name
+      FROM public.lead_task t
+      LEFT JOIN public.crm_user assignee
+        ON assignee.id = t.assigned_to
+      WHERE t.id = $1
+      LIMIT 1
+    `,
+    [taskId]
+  );
+
+  if (!currentResult.rows.length) {
+    return null;
+  }
+
+  const current = mapLeadTaskRow(currentResult.rows[0]);
+  const updates = [];
+  const params = [];
+
+  const assign = (column, value) => {
+    params.push(value);
+    updates.push(`${column} = $${params.length}`);
+  };
+
+  if (Object.prototype.hasOwnProperty.call(patch, "status")) {
+    assign("status", patch.status || current.status || "pending");
+  }
+
+  if (Object.prototype.hasOwnProperty.call(patch, "dueAt")) {
+    assign("due_at", patch.dueAt || null);
+  }
+
+  if (!updates.length) {
+    return current;
+  }
+
+  params.push(taskId);
+
+  await db.query(
+    `
+      UPDATE public.lead_task
+      SET ${updates.join(", ")},
+          updated_at = NOW()
+      WHERE id = $${params.length}
+    `,
+    params
+  );
+
+  const nextResult = await db.query(
+    `
+      SELECT
+        t.id,
+        t.lead_id,
+        t.assigned_to,
+        t.title,
+        t.description,
+        t.due_at,
+        t.status,
+        t.created_by,
+        t.created_at,
+        t.updated_at,
+        assignee.external_ref AS assigned_to_external_ref,
+        assignee.full_name AS assigned_to_name
+      FROM public.lead_task t
+      LEFT JOIN public.crm_user assignee
+        ON assignee.id = t.assigned_to
+      WHERE t.id = $1
+      LIMIT 1
+    `,
+    [taskId]
+  );
+
+  const next = mapLeadTaskRow(nextResult.rows[0]);
+
+  await insertAuditLog({
+    entityType: "lead_task",
+    entityId: taskId,
+    action:
+      patch.status && patch.status !== current.status
+        ? "lead.task.status_changed"
+        : "lead.task.updated",
+    performedBy: actorRef,
+    oldValue: taskAuditPayload(current),
+    newValue: taskAuditPayload(next),
+  });
+
+  return next;
 }
 
 async function createLeadNote({
@@ -1274,6 +1518,8 @@ module.exports = {
   updateLead,
   createLeadTask,
   listLeadTasks,
+  listTasks,
+  updateTask,
   createLeadNote,
   listLeadNotes,
   createPaymentLink,
