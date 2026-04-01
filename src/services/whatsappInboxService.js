@@ -6,7 +6,6 @@ const {
   updateConversationState,
   takeConversationByHuman,
   resumeConversationByBot,
-  syncConversationStateIfExists,
   isBotResponseEnabled,
 } = require("../repositories/conversationRepository");
 const {
@@ -218,14 +217,9 @@ async function getInbox(filters) {
         latestOrder,
         recentMessages: messages,
       });
-      const syncedConversation =
-        (await syncConversationStateIfExists({
-          conversationId: conversation.id,
-          stateName: salesSnapshot.salesStageCode,
-        })) || conversation;
 
       return {
-        ...syncedConversation,
+        ...conversation,
         ...salesSnapshot,
       };
     })
@@ -256,11 +250,6 @@ async function getConversationDetail(conversationId, messageLimit, agentId = nul
     latestOrder,
     recentMessages: messages,
   });
-  conversation =
-    (await syncConversationStateIfExists({
-      conversationId: conversation.id,
-      stateName: salesSnapshot.salesStageCode,
-    })) || conversation;
 
   return {
     conversation: {

@@ -1,4 +1,7 @@
-const { upsertLeadSalesSignals } = require("../repositories/leadRepository");
+const {
+  findLeadByConversationId,
+  upsertLeadSalesSignals,
+} = require("../repositories/leadRepository");
 
 function normalize(value) {
   return String(value || "")
@@ -486,6 +489,28 @@ async function buildConversationSalesSnapshot({
     estimatedValue:
       typeof latestOrder?.total === "number" && latestOrder.total > 0 ? latestOrder.total : null,
   };
+  const persistedLead = conversation?.id
+    ? await findLeadByConversationId(conversation.id)
+    : null;
+  const resolvedSnapshot = {
+    aiScore:
+      typeof persistedLead?.aiScore === "number" ? persistedLead.aiScore : snapshot.aiScore,
+    aiScoreBand: snapshot.aiScoreBand,
+    aiScoreReasons:
+      Array.isArray(persistedLead?.aiScoreReasons) && persistedLead.aiScoreReasons.length
+        ? persistedLead.aiScoreReasons
+        : snapshot.aiScoreReasons,
+    salesStageCode: persistedLead?.salesStage?.code || snapshot.salesStageCode,
+    objections:
+      Array.isArray(persistedLead?.objections) && persistedLead.objections.length
+        ? persistedLead.objections
+        : snapshot.objections,
+    nextAction: persistedLead?.nextAction || snapshot.nextAction,
+    estimatedValue:
+      typeof persistedLead?.estimatedValue === "number"
+        ? persistedLead.estimatedValue
+        : snapshot.estimatedValue,
+  };
 
   if (persist) {
     await upsertLeadSalesSignals({
@@ -504,7 +529,7 @@ async function buildConversationSalesSnapshot({
     });
   }
 
-  return snapshot;
+  return resolvedSnapshot;
 }
 
 module.exports = {

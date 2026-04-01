@@ -555,32 +555,6 @@ async function updateLead({
     params
   );
 
-  if (Object.prototype.hasOwnProperty.call(patch, "stageCode") && patch.stageCode) {
-    const stateResult = await db.query(
-      `
-        SELECT id, nombre
-        FROM public.cat_estados_conversacion
-        WHERE nombre = $1
-        LIMIT 1
-      `,
-      [patch.stageCode]
-    );
-
-    if (stateResult.rows.length) {
-      const state = stateResult.rows[0];
-      await db.query(
-        `
-          UPDATE public.conversaciones
-          SET estado = $2,
-              estado_id = $3,
-              ultima_interaccion = NOW()
-          WHERE id = $1
-        `,
-        [current.conversationId, state.nombre, Number(state.id)]
-      );
-    }
-  }
-
   const next = await findLeadById(leadId);
 
   await insertAuditLog({
@@ -1476,7 +1450,7 @@ async function upsertLeadSalesSignals({
           WHEN public.lead.sales_stage_manual_override THEN public.lead.sales_stage_id
           ELSE EXCLUDED.sales_stage_id
         END,
-        estimated_value = EXCLUDED.estimated_value,
+        estimated_value = COALESCE(public.lead.estimated_value, EXCLUDED.estimated_value),
         ai_score = EXCLUDED.ai_score,
         ai_score_reasons_json = EXCLUDED.ai_score_reasons_json,
         intent_label = EXCLUDED.intent_label,
