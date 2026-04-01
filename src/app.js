@@ -4,8 +4,6 @@ const { corsOrigins } = require("./config/env");
 const healthRouter = require("./routes/health");
 const leadsRouter = require("./routes/leads");
 const salesRouter = require("./routes/sales");
-const tasksRouter = require("./routes/tasks");
-const whatsappRouter = require("./routes/whatsapp");
 const { notFound } = require("./middlewares/notFound");
 const { errorHandler } = require("./middlewares/errorHandler");
 
@@ -27,8 +25,6 @@ app.use(express.json());
 app.use(healthRouter);
 app.use(salesRouter);
 app.use(leadsRouter);
-app.use(tasksRouter);
-app.use(whatsappRouter);
 
 app.use(notFound);
 app.use(errorHandler);
