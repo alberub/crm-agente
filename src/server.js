@@ -1,10 +1,12 @@
 const app = require("./app");
 const { crmPort, validateEnv } = require("./config/env");
 const { closeRealtime, initRealtime } = require("./services/realtimeService");
+const { initializeAuth } = require("./services/authService");
 
 validateEnv();
 
 async function startServer() {
+  await initializeAuth();
   await initRealtime();
 
   const server = app.listen(crmPort, () => {

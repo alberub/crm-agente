@@ -1,16 +1,9 @@
 const express = require("express");
+const { requireRoles } = require("../middlewares/authentication");
 const { listTasks, updateTask } = require("../repositories/leadRepository");
 const { AppError } = require("../utils/errors");
 
 const router = express.Router();
-
-function readActorRef(req) {
-  const headerAgentId = req.header("x-agent-id");
-  const queryAgentId = req.query.agentId;
-  const bodyAgentId = req.body?.agentId;
-
-  return String(headerAgentId || queryAgentId || bodyAgentId || "").trim() || null;
-}
 
 function parseTaskId(value) {
   const taskId = Number(value);
@@ -37,7 +30,7 @@ router.get("/api/tasks", async (req, res, next) => {
   }
 });
 
-router.patch("/api/tasks/:id", async (req, res, next) => {
+router.patch("/api/tasks/:id", requireRoles(["admin", "manager", "agent"]), async (req, res, next) => {
   try {
     const taskId = parseTaskId(req.params.id);
     const task = await updateTask({
@@ -46,7 +39,7 @@ router.patch("/api/tasks/:id", async (req, res, next) => {
         status: req.body.status,
         dueAt: req.body.dueAt,
       },
-      actorRef: readActorRef(req),
+      actorRef: req.auth.actorRef,
     });
 
     if (!task) {

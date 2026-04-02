@@ -22,7 +22,7 @@ function readOrigins(value) {
   const rawValue = cleanEnvValue(value);
 
   if (!rawValue) {
-    return ["http://localhost:5173"];
+    return ["http://localhost:4200", "http://localhost:5173"];
   }
 
   return rawValue
@@ -59,6 +59,19 @@ module.exports = {
   crmPort: readNumber(process.env.CRM_PORT, 3100),
   corsOrigins: readOrigins(process.env.CRM_CORS_ORIGIN),
   outboundMessageRole: cleanEnvValue(process.env.CRM_OUTBOUND_ROLE) || "asesor",
+  authBootstrapAdminEmail: cleanEnvValue(process.env.AUTH_BOOTSTRAP_ADMIN_EMAIL),
+  authBootstrapAdminPassword: cleanEnvValue(process.env.AUTH_BOOTSTRAP_ADMIN_PASSWORD),
+  authBootstrapAdminName:
+    cleanEnvValue(process.env.AUTH_BOOTSTRAP_ADMIN_NAME) || "Administrador CRM",
+  authBootstrapAdminExternalRef:
+    cleanEnvValue(process.env.AUTH_BOOTSTRAP_ADMIN_EXTERNAL_REF),
+  sessionCookieName:
+    cleanEnvValue(process.env.AUTH_SESSION_COOKIE_NAME) || "crm_session",
+  sessionTtlHours: readNumber(process.env.AUTH_SESSION_TTL_HOURS, 12),
+  sessionCookieSecure:
+    cleanEnvValue(process.env.AUTH_SESSION_COOKIE_SECURE) === "false"
+      ? false
+      : process.env.NODE_ENV === "production",
   databaseUrl: cleanEnvValue(process.env.DATABASE_URL),
   dbHost: cleanEnvValue(process.env.DB_HOST),
   dbUser: cleanEnvValue(process.env.DB_USER),

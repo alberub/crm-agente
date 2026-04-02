@@ -1,4 +1,5 @@
 const express = require("express");
+const { requireRoles } = require("../middlewares/authentication");
 const {
   getInbox,
   getConversationDetail,
@@ -14,14 +15,6 @@ const { addClient } = require("../services/realtimeService");
 const { AppError } = require("../utils/errors");
 
 const router = express.Router();
-
-function readAgentId(req) {
-  const headerAgentId = req.header("x-agent-id");
-  const queryAgentId = req.query.agentId;
-  const bodyAgentId = req.body?.agentId;
-
-  return String(headerAgentId || queryAgentId || bodyAgentId || "").trim() || null;
-}
 
 router.get("/api/whatsapp/stream", (req, res, next) => {
   try {
@@ -57,7 +50,7 @@ router.get("/api/whatsapp/conversations", async (req, res, next) => {
     const unreadOnly = String(req.query.unread || "").toLowerCase() === "true";
 
     const conversations = await getInbox({
-      agentId: readAgentId(req),
+      agentId: req.auth.actorRef,
       search: String(req.query.search || ""),
       activeOnly,
       unreadOnly,
@@ -81,7 +74,7 @@ router.get("/api/whatsapp/conversations/:id", async (req, res, next) => {
     const detail = await getConversationDetail(
       conversationId,
       req.query.messageLimit,
-      readAgentId(req)
+      req.auth.actorRef
     );
     res.status(200).json(detail);
   } catch (error) {
@@ -99,7 +92,7 @@ router.post("/api/whatsapp/conversations/:id/read", async (req, res, next) => {
 
     const conversation = await markConversationAsRead({
       conversationId,
-      agentId: readAgentId(req),
+      agentId: req.auth.actorRef,
       lastReadMessageId: req.body.lastReadMessageId ?? null,
     });
 
@@ -124,93 +117,109 @@ router.get("/api/whatsapp/conversations/:id/messages", async (req, res, next) =>
   }
 });
 
-router.patch("/api/whatsapp/conversations/:id/state", async (req, res, next) => {
-  try {
-    const conversationId = Number(req.params.id);
-    const stateName = String(req.body.state || "").trim();
+router.patch(
+  "/api/whatsapp/conversations/:id/state",
+  requireRoles(["admin", "manager", "agent"]),
+  async (req, res, next) => {
+    try {
+      const conversationId = Number(req.params.id);
+      const stateName = String(req.body.state || "").trim();
 
-    if (!Number.isInteger(conversationId) || conversationId <= 0) {
-      throw new AppError("ID de conversacion invalido.", 400);
+      if (!Number.isInteger(conversationId) || conversationId <= 0) {
+        throw new AppError("ID de conversacion invalido.", 400);
+      }
+
+      if (!stateName) {
+        throw new AppError("Debes enviar un estado de conversacion.", 400);
+      }
+
+      const conversation = await changeConversationState({
+        conversationId,
+        stateName,
+      });
+
+      res.status(200).json({ conversation });
+    } catch (error) {
+      next(error);
     }
-
-    if (!stateName) {
-      throw new AppError("Debes enviar un estado de conversacion.", 400);
-    }
-
-    const conversation = await changeConversationState({
-      conversationId,
-      stateName,
-    });
-
-    res.status(200).json({ conversation });
-  } catch (error) {
-    next(error);
   }
-});
+);
 
-router.post("/api/whatsapp/conversations/:id/takeover", async (req, res, next) => {
-  try {
-    const conversationId = Number(req.params.id);
+router.post(
+  "/api/whatsapp/conversations/:id/takeover",
+  requireRoles(["admin", "manager", "agent"]),
+  async (req, res, next) => {
+    try {
+      const conversationId = Number(req.params.id);
 
-    if (!Number.isInteger(conversationId) || conversationId <= 0) {
-      throw new AppError("ID de conversacion invalido.", 400);
+      if (!Number.isInteger(conversationId) || conversationId <= 0) {
+        throw new AppError("ID de conversacion invalido.", 400);
+      }
+
+      const response = await takeOverConversation({
+        conversationId,
+        humanAgentId: req.body.humanAgentId ?? req.auth.actorRef,
+      });
+
+      res.status(200).json(response);
+    } catch (error) {
+      next(error);
     }
-
-    const response = await takeOverConversation({
-      conversationId,
-      humanAgentId: req.body.humanAgentId ?? readAgentId(req),
-    });
-
-    res.status(200).json(response);
-  } catch (error) {
-    next(error);
   }
-});
+);
 
-router.post("/api/whatsapp/conversations/:id/release", async (req, res, next) => {
-  try {
-    const conversationId = Number(req.params.id);
+router.post(
+  "/api/whatsapp/conversations/:id/release",
+  requireRoles(["admin", "manager", "agent"]),
+  async (req, res, next) => {
+    try {
+      const conversationId = Number(req.params.id);
 
-    if (!Number.isInteger(conversationId) || conversationId <= 0) {
-      throw new AppError("ID de conversacion invalido.", 400);
+      if (!Number.isInteger(conversationId) || conversationId <= 0) {
+        throw new AppError("ID de conversacion invalido.", 400);
+      }
+
+      const response = await releaseConversation({ conversationId });
+
+      res.status(200).json(response);
+    } catch (error) {
+      next(error);
     }
-
-    const response = await releaseConversation({ conversationId });
-
-    res.status(200).json(response);
-  } catch (error) {
-    next(error);
   }
-});
+);
 
-router.post("/api/whatsapp/conversations/:id/messages", async (req, res, next) => {
-  try {
-    const conversationId = Number(req.params.id);
-    const body = String(req.body.body || "").trim();
-    const agentId = readAgentId(req);
+router.post(
+  "/api/whatsapp/conversations/:id/messages",
+  requireRoles(["admin", "manager", "agent"]),
+  async (req, res, next) => {
+    try {
+      const conversationId = Number(req.params.id);
+      const body = String(req.body.body || "").trim();
+      const agentId = req.auth.actorRef;
 
-    if (!Number.isInteger(conversationId) || conversationId <= 0) {
-      throw new AppError("ID de conversacion invalido.", 400);
+      if (!Number.isInteger(conversationId) || conversationId <= 0) {
+        throw new AppError("ID de conversacion invalido.", 400);
+      }
+
+      if (!body) {
+        throw new AppError("Debes enviar el texto del mensaje.", 400);
+      }
+
+      const response = await sendManualReply({
+        conversationId,
+        body,
+        humanAgentId: req.body.humanAgentId ?? agentId,
+        notifyCustomer: req.body.notifyCustomer !== false,
+        takeOver: req.body.takeOver !== false,
+        agentId,
+      });
+
+      res.status(201).json(response);
+    } catch (error) {
+      next(error);
     }
-
-    if (!body) {
-      throw new AppError("Debes enviar el texto del mensaje.", 400);
-    }
-
-    const response = await sendManualReply({
-      conversationId,
-      body,
-      humanAgentId: req.body.humanAgentId ?? agentId,
-      notifyCustomer: req.body.notifyCustomer !== false,
-      takeOver: req.body.takeOver !== false,
-      agentId,
-    });
-
-    res.status(201).json(response);
-  } catch (error) {
-    next(error);
   }
-});
+);
 
 router.get("/api/whatsapp/states", async (_req, res, next) => {
   try {

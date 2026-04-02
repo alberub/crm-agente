@@ -1,4 +1,5 @@
 const express = require("express");
+const { requireRoles } = require("../middlewares/authentication");
 const {
   ensureLeadByConversationId,
   listLeads,
@@ -100,7 +101,7 @@ router.post("/api/leads/from-conversation/:conversationId", async (req, res, nex
   }
 });
 
-router.patch("/api/leads/:id", async (req, res, next) => {
+router.patch("/api/leads/:id", requireRoles(["admin", "manager", "agent"]), async (req, res, next) => {
   try {
     const leadId = parseLeadId(req.params.id);
     const lead = await updateLead({
@@ -111,6 +112,7 @@ router.patch("/api/leads/:id", async (req, res, next) => {
         nextFollowupAt: req.body.nextFollowupAt,
         lossReason: req.body.lossReason,
       },
+      actorRef: req.auth.actorRef,
     });
 
     if (!lead) {
@@ -127,7 +129,10 @@ router.patch("/api/leads/:id", async (req, res, next) => {
   }
 });
 
-router.patch("/api/leads/:id/stage", async (req, res, next) => {
+router.patch(
+  "/api/leads/:id/stage",
+  requireRoles(["admin", "manager", "agent"]),
+  async (req, res, next) => {
   try {
     const leadId = parseLeadId(req.params.id);
     const stageCode = String(req.body.stageCode || "").trim();
@@ -139,6 +144,7 @@ router.patch("/api/leads/:id/stage", async (req, res, next) => {
     const lead = await updateLead({
       leadId,
       patch: { stageCode },
+      actorRef: req.auth.actorRef,
     });
 
     if (!lead) {
@@ -153,6 +159,7 @@ router.patch("/api/leads/:id/stage", async (req, res, next) => {
 
     next(error);
   }
-});
+  }
+);
 
 module.exports = router;
