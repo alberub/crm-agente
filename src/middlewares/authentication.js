@@ -1,5 +1,6 @@
 const {
   sessionCookieName,
+  sessionCookieSameSite,
   sessionCookieSecure,
   sessionTtlHours,
 } = require("../config/env");
@@ -34,7 +35,7 @@ function getSessionCookieOptions() {
     httpOnly: true,
     maxAge: Math.max(sessionTtlHours, 1) * 60 * 60 * 1000,
     path: "/",
-    sameSite: "lax",
+    sameSite: sessionCookieSameSite,
     secure: sessionCookieSecure,
   };
 }
@@ -43,7 +44,7 @@ function clearSessionCookie(res) {
   res.clearCookie(sessionCookieName, {
     httpOnly: true,
     path: "/",
-    sameSite: "lax",
+    sameSite: sessionCookieSameSite,
     secure: sessionCookieSecure,
   });
 }

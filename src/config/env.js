@@ -18,6 +18,26 @@ function readNumber(value, fallback) {
   return Number.isFinite(parsedValue) ? parsedValue : fallback;
 }
 
+function readBoolean(value, fallback) {
+  const rawValue = cleanEnvValue(value);
+
+  if (!rawValue) {
+    return fallback;
+  }
+
+  const normalized = String(rawValue).trim().toLowerCase();
+
+  if (["true", "1", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+
+  if (["false", "0", "no", "off"].includes(normalized)) {
+    return false;
+  }
+
+  return fallback;
+}
+
 function readOrigins(value) {
   const rawValue = cleanEnvValue(value);
 
@@ -29,6 +49,18 @@ function readOrigins(value) {
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function readSameSite(value, fallback) {
+  const normalized = String(cleanEnvValue(value) || fallback || "")
+    .trim()
+    .toLowerCase();
+
+  if (normalized === "strict" || normalized === "lax" || normalized === "none") {
+    return normalized;
+  }
+
+  return fallback;
 }
 
 function validateEnv() {
@@ -67,11 +99,18 @@ module.exports = {
     cleanEnvValue(process.env.AUTH_BOOTSTRAP_ADMIN_EXTERNAL_REF),
   sessionCookieName:
     cleanEnvValue(process.env.AUTH_SESSION_COOKIE_NAME) || "crm_session",
+  sessionCookieSameSite:
+    readSameSite(
+      process.env.AUTH_SESSION_COOKIE_SAME_SITE,
+      readBoolean(process.env.AUTH_SESSION_COOKIE_SECURE, process.env.NODE_ENV === "production")
+        ? "none"
+        : "lax"
+    ),
   sessionTtlHours: readNumber(process.env.AUTH_SESSION_TTL_HOURS, 12),
-  sessionCookieSecure:
-    cleanEnvValue(process.env.AUTH_SESSION_COOKIE_SECURE) === "false"
-      ? false
-      : process.env.NODE_ENV === "production",
+  sessionCookieSecure: readBoolean(
+    process.env.AUTH_SESSION_COOKIE_SECURE,
+    process.env.NODE_ENV === "production"
+  ),
   databaseUrl: cleanEnvValue(process.env.DATABASE_URL),
   dbHost: cleanEnvValue(process.env.DB_HOST),
   dbUser: cleanEnvValue(process.env.DB_USER),
