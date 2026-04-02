@@ -1,11 +1,13 @@
 const express = require("express");
+const { isOwnScopeRole } = require("../auth/accessControl");
 const { requireRoles } = require("../middlewares/authentication");
 const {
   ensureLeadByConversationId,
   listLeads,
   findLeadById,
+  findLeadByIdForOwner,
   updateLead,
-} = require("../repositories/mvpLeadRepository");
+} = require("../repositories/leadRepository");
 const { AppError } = require("../utils/errors");
 
 const router = express.Router();
@@ -41,9 +43,14 @@ function handleLeadErrors(error, next) {
 
 router.get("/api/leads", async (req, res, next) => {
   try {
+    const scopedOwnerExternalRef = isOwnScopeRole(req.auth.user?.roleCode)
+      ? req.auth.actorRef
+      : String(req.query.owner || "").trim() || null;
     const leads = await listLeads({
       search: String(req.query.search || ""),
       stageCode: String(req.query.stageCode || "").trim() || null,
+      status: String(req.query.status || "").trim() || null,
+      ownerExternalRef: scopedOwnerExternalRef,
       followupDueOnly: String(req.query.followupDue || "").toLowerCase() === "true",
       limit: req.query.limit,
     });
@@ -61,7 +68,9 @@ router.get("/api/leads", async (req, res, next) => {
 router.get("/api/leads/:id", async (req, res, next) => {
   try {
     const leadId = parseLeadId(req.params.id);
-    const lead = await findLeadById(leadId);
+    const lead = isOwnScopeRole(req.auth.user?.roleCode)
+      ? await findLeadByIdForOwner(leadId, req.auth.actorRef)
+      : await findLeadById(leadId);
 
     if (!lead) {
       throw new AppError("Lead no encontrado.", 404);
@@ -85,7 +94,18 @@ router.post("/api/leads/from-conversation/:conversationId", async (req, res, nex
       throw new AppError("ID de conversacion invalido.", 400);
     }
 
-    const lead = await ensureLeadByConversationId(conversationId);
+    let lead = await ensureLeadByConversationId(conversationId);
+
+    if (lead && isOwnScopeRole(req.auth.user?.roleCode) && !lead.owner?.externalRef) {
+      lead = await updateLead({
+        leadId: lead.id,
+        patch: {
+          ownerExternalRef: req.auth.actorRef,
+          ownerName: req.auth.user?.fullName || req.auth.user?.email || "Asesor CRM",
+        },
+        actorRef: req.auth.actorRef,
+      });
+    }
 
     if (!lead) {
       throw new AppError("No se pudo crear o recuperar el lead.", 500);
@@ -113,6 +133,7 @@ router.patch("/api/leads/:id", requireRoles(["admin", "manager", "agent"]), asyn
         lossReason: req.body.lossReason,
       },
       actorRef: req.auth.actorRef,
+      ownerExternalRef: isOwnScopeRole(req.auth.user?.roleCode) ? req.auth.actorRef : null,
     });
 
     if (!lead) {
@@ -145,6 +166,7 @@ router.patch(
       leadId,
       patch: { stageCode },
       actorRef: req.auth.actorRef,
+      ownerExternalRef: isOwnScopeRole(req.auth.user?.roleCode) ? req.auth.actorRef : null,
     });
 
     if (!lead) {

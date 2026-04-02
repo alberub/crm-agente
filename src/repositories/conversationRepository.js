@@ -68,7 +68,13 @@ function mapConversation(row) {
   };
 }
 
-function buildFilters({ search, activeOnly, unreadOnly = false, agentId = null }) {
+function buildFilters({
+  search,
+  activeOnly,
+  unreadOnly = false,
+  agentId = null,
+  ownerExternalRef = null,
+}) {
   const conditions = [];
   const params = [];
 
@@ -113,6 +119,17 @@ function buildFilters({ search, activeOnly, unreadOnly = false, agentId = null }
     `);
   }
 
+  if (ownerExternalRef) {
+    params.push(String(ownerExternalRef).trim());
+    const ownerIndex = params.length;
+    conditions.push(`
+      (
+        c.human_agent_id = $${ownerIndex}
+        OR owner.external_ref = $${ownerIndex}
+      )
+    `);
+  }
+
   return {
     whereClause: conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "",
     params,
@@ -125,8 +142,15 @@ async function listConversations({
   unreadOnly = false,
   limit = 50,
   agentId = null,
+  ownerExternalRef = null,
 }) {
-  const { whereClause, params } = buildFilters({ search, activeOnly, unreadOnly, agentId });
+  const { whereClause, params } = buildFilters({
+    search,
+    activeOnly,
+    unreadOnly,
+    agentId,
+    ownerExternalRef,
+  });
   const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 200);
 
   params.push(agentId);
@@ -221,7 +245,13 @@ async function listConversations({
   return result.rows.map(mapConversation);
 }
 
-async function findConversationById(conversationId, agentId = null) {
+async function findConversationById(conversationId, agentId = null, ownerExternalRef = null) {
+  const scopedCondition = ownerExternalRef
+    ? `AND (
+        c.human_agent_id = $3
+        OR owner.external_ref = $3
+      )`
+    : "";
   const result = await db.query(
     `
       SELECT
@@ -301,9 +331,10 @@ async function findConversationById(conversationId, agentId = null) {
           AND m.id > COALESCE(cr.last_read_message_id, 0)
       ) AS unread_totals ON TRUE
       WHERE c.id = $1
+      ${scopedCondition}
       LIMIT 1
     `,
-    [conversationId, agentId]
+    ownerExternalRef ? [conversationId, agentId, ownerExternalRef] : [conversationId, agentId]
   );
 
   if (result.rows.length === 0) {

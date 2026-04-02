@@ -1,4 +1,5 @@
 const express = require("express");
+const { isOwnScopeRole } = require("../auth/accessControl");
 const { requireRoles } = require("../middlewares/authentication");
 const {
   getInbox,
@@ -15,6 +16,10 @@ const { addClient } = require("../services/realtimeService");
 const { AppError } = require("../utils/errors");
 
 const router = express.Router();
+
+function resolveConversationScope(req) {
+  return isOwnScopeRole(req.auth.user?.roleCode) ? req.auth.actorRef : null;
+}
 
 router.get("/api/whatsapp/stream", (req, res, next) => {
   try {
@@ -51,6 +56,7 @@ router.get("/api/whatsapp/conversations", async (req, res, next) => {
 
     const conversations = await getInbox({
       agentId: req.auth.actorRef,
+      ownerExternalRef: resolveConversationScope(req),
       search: String(req.query.search || ""),
       activeOnly,
       unreadOnly,
@@ -74,7 +80,8 @@ router.get("/api/whatsapp/conversations/:id", async (req, res, next) => {
     const detail = await getConversationDetail(
       conversationId,
       req.query.messageLimit,
-      req.auth.actorRef
+      req.auth.actorRef,
+      resolveConversationScope(req)
     );
     res.status(200).json(detail);
   } catch (error) {
@@ -94,6 +101,7 @@ router.post("/api/whatsapp/conversations/:id/read", async (req, res, next) => {
       conversationId,
       agentId: req.auth.actorRef,
       lastReadMessageId: req.body.lastReadMessageId ?? null,
+      ownerExternalRef: resolveConversationScope(req),
     });
 
     res.status(200).json({ conversation });
@@ -110,7 +118,11 @@ router.get("/api/whatsapp/conversations/:id/messages", async (req, res, next) =>
       throw new AppError("ID de conversacion invalido.", 400);
     }
 
-    const messages = await getConversationMessages(conversationId, req.query.limit);
+    const messages = await getConversationMessages(
+      conversationId,
+      req.query.limit,
+      resolveConversationScope(req)
+    );
     res.status(200).json({ messages });
   } catch (error) {
     next(error);
@@ -136,6 +148,7 @@ router.patch(
       const conversation = await changeConversationState({
         conversationId,
         stateName,
+        accessOwnerExternalRef: resolveConversationScope(req),
       });
 
       res.status(200).json({ conversation });
@@ -158,7 +171,9 @@ router.post(
 
       const response = await takeOverConversation({
         conversationId,
-        humanAgentId: req.body.humanAgentId ?? req.auth.actorRef,
+        humanAgentId: isOwnScopeRole(req.auth.user?.roleCode)
+          ? req.auth.actorRef
+          : req.body.humanAgentId ?? req.auth.actorRef,
       });
 
       res.status(200).json(response);
@@ -179,7 +194,10 @@ router.post(
         throw new AppError("ID de conversacion invalido.", 400);
       }
 
-      const response = await releaseConversation({ conversationId });
+      const response = await releaseConversation({
+        conversationId,
+        accessOwnerExternalRef: resolveConversationScope(req),
+      });
 
       res.status(200).json(response);
     } catch (error) {
@@ -212,6 +230,7 @@ router.post(
         notifyCustomer: req.body.notifyCustomer !== false,
         takeOver: req.body.takeOver !== false,
         agentId,
+        accessOwnerExternalRef: resolveConversationScope(req),
       });
 
       res.status(201).json(response);

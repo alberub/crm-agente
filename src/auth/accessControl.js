@@ -36,9 +36,14 @@ function canWriteCrm(roleCode) {
   return getPermissionsForRole(roleCode).includes("crm.write");
 }
 
+function isOwnScopeRole(roleCode) {
+  return normalizeRoleCode(roleCode) === "agent";
+}
+
 module.exports = {
   canWriteCrm,
   getPermissionsForRole,
   hasAnyRole,
+  isOwnScopeRole,
   normalizeRoleCode,
 };

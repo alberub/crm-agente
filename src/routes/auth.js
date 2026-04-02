@@ -63,6 +63,7 @@ router.post("/auth/login", async (req, res, next) => {
 router.get("/auth/me", requireAuth, (req, res) => {
   res.status(200).json({
     user: req.auth.user,
+    expiresAt: req.auth.session?.expiresAt || null,
   });
 });
 

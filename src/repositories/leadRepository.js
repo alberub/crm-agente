@@ -284,6 +284,20 @@ async function findLeadById(leadId) {
   return mapLeadRow(result.rows[0]);
 }
 
+async function findLeadByIdForOwner(leadId, ownerExternalRef = null) {
+  const lead = await findLeadById(leadId);
+
+  if (!lead) {
+    return null;
+  }
+
+  if (!ownerExternalRef) {
+    return lead;
+  }
+
+  return lead.owner?.externalRef === ownerExternalRef ? lead : null;
+}
+
 async function findLeadByConversationId(conversationId) {
   const result = await db.query(
     `
@@ -462,8 +476,11 @@ async function updateLead({
   leadId,
   patch,
   actorRef = null,
+  ownerExternalRef = null,
 }) {
-  const current = await findLeadById(leadId);
+  const current = ownerExternalRef
+    ? await findLeadByIdForOwner(leadId, ownerExternalRef)
+    : await findLeadById(leadId);
 
   if (!current) {
     return null;
@@ -775,7 +792,9 @@ async function updateTask({
   taskId,
   patch,
   actorRef = null,
+  ownerExternalRef = null,
 }) {
+  const scopedClause = ownerExternalRef ? "AND assignee.external_ref = $2" : "";
   const currentResult = await db.query(
     `
       SELECT
@@ -795,9 +814,10 @@ async function updateTask({
       LEFT JOIN public.crm_user assignee
         ON assignee.id = t.assigned_to
       WHERE t.id = $1
+      ${scopedClause}
       LIMIT 1
     `,
-    [taskId]
+    ownerExternalRef ? [taskId, ownerExternalRef] : [taskId]
   );
 
   if (!currentResult.rows.length) {
@@ -1188,7 +1208,16 @@ async function listLeadTimeline(leadId) {
   );
 }
 
-async function getPipelineSummary() {
+async function getPipelineSummary({ ownerExternalRef = null } = {}) {
+  const ownerCondition = ownerExternalRef
+    ? `
+       AND l.owner_user_id IN (
+         SELECT owner.id
+         FROM public.crm_user owner
+         WHERE owner.external_ref = $1
+       )
+    `
+    : "";
   const result = await db.query(
     `
       SELECT
@@ -1204,9 +1233,11 @@ async function getPipelineSummary() {
       LEFT JOIN public.lead l
         ON l.sales_stage_id = ss.id
        AND COALESCE(l.status, 'active') <> 'archived'
+       ${ownerCondition}
       GROUP BY ss.id, ss.code, ss.name, ss.sort_order, ss.is_closed_won, ss.is_closed_lost
       ORDER BY ss.sort_order ASC, ss.id ASC
-    `
+    `,
+    ownerExternalRef ? [ownerExternalRef] : []
   );
 
   const byStage = result.rows.map((row) => ({
@@ -1486,6 +1517,7 @@ module.exports = {
   resolveOrCreateCrmUser,
   insertAuditLog,
   findLeadById,
+  findLeadByIdForOwner,
   findLeadByConversationId,
   ensureLeadByConversationId,
   listLeads,

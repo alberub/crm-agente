@@ -1,4 +1,5 @@
 const express = require("express");
+const { isOwnScopeRole } = require("../auth/accessControl");
 const { requireRoles } = require("../middlewares/authentication");
 const { listTasks, updateTask } = require("../repositories/leadRepository");
 const { AppError } = require("../utils/errors");
@@ -20,7 +21,9 @@ router.get("/api/tasks", async (req, res, next) => {
     const tasks = await listTasks({
       status: String(req.query.status || "").trim() || null,
       dueBucket: String(req.query.dueBucket || "").trim() || null,
-      ownerExternalRef: String(req.query.owner || "").trim() || null,
+      ownerExternalRef: isOwnScopeRole(req.auth.user?.roleCode)
+        ? req.auth.actorRef
+        : String(req.query.owner || "").trim() || null,
       limit: req.query.limit,
     });
 
@@ -40,6 +43,7 @@ router.patch("/api/tasks/:id", requireRoles(["admin", "manager", "agent"]), asyn
         dueAt: req.body.dueAt,
       },
       actorRef: req.auth.actorRef,
+      ownerExternalRef: isOwnScopeRole(req.auth.user?.roleCode) ? req.auth.actorRef : null,
     });
 
     if (!task) {

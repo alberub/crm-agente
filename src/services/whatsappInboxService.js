@@ -228,8 +228,13 @@ async function getInbox(filters) {
   return enrichedConversations;
 }
 
-async function getConversationDetail(conversationId, messageLimit, agentId = null) {
-  let conversation = await findConversationById(conversationId, agentId);
+async function getConversationDetail(
+  conversationId,
+  messageLimit,
+  agentId = null,
+  ownerExternalRef = null
+) {
+  let conversation = await findConversationById(conversationId, agentId, ownerExternalRef);
 
   if (!conversation) {
     throw new AppError("Conversacion no encontrada.", 404);
@@ -268,8 +273,8 @@ async function getConversationDetail(conversationId, messageLimit, agentId = nul
   };
 }
 
-async function getConversationMessages(conversationId, limit) {
-  const conversation = await findConversationById(conversationId);
+async function getConversationMessages(conversationId, limit, accessOwnerExternalRef = null) {
+  const conversation = await findConversationById(conversationId, null, accessOwnerExternalRef);
 
   if (!conversation) {
     throw new AppError("Conversacion no encontrada.", 404);
@@ -282,12 +287,13 @@ async function markConversationAsRead({
   conversationId,
   agentId,
   lastReadMessageId = null,
+  ownerExternalRef = null,
 }) {
   if (!agentId) {
     throw new AppError("Falta agentId para registrar lectura.", 400);
   }
 
-  const conversation = await findConversationById(conversationId, agentId);
+  const conversation = await findConversationById(conversationId, agentId, ownerExternalRef);
 
   if (!conversation) {
     throw new AppError("Conversacion no encontrada.", 404);
@@ -306,7 +312,7 @@ async function markConversationAsRead({
     lastReadMessageId: resolvedLastReadMessageId,
   });
 
-  return findConversationById(conversationId, agentId);
+  return findConversationById(conversationId, agentId, ownerExternalRef);
 }
 
 async function sendManualReply({
@@ -316,8 +322,13 @@ async function sendManualReply({
   notifyCustomer = true,
   takeOver = true,
   agentId = null,
+  accessOwnerExternalRef = null,
 }) {
-  const existingConversation = await findConversationById(conversationId);
+  const existingConversation = await findConversationById(
+    conversationId,
+    null,
+    accessOwnerExternalRef
+  );
 
   if (!existingConversation) {
     throw new AppError("Conversacion no encontrada.", 404);
@@ -363,7 +374,19 @@ async function sendManualReply({
   };
 }
 
-async function changeConversationState({ conversationId, stateName }) {
+async function changeConversationState({
+  conversationId,
+  stateName,
+  accessOwnerExternalRef = null,
+}) {
+  const existingConversation = accessOwnerExternalRef
+    ? await findConversationById(conversationId, null, accessOwnerExternalRef)
+    : await findConversationById(conversationId);
+
+  if (!existingConversation) {
+    throw new AppError("Conversacion no encontrada.", 404);
+  }
+
   const updatedConversation = await updateConversationState({
     conversationId,
     stateName,
@@ -396,7 +419,17 @@ async function takeOverConversation({ conversationId, humanAgentId = null }) {
   };
 }
 
-async function releaseConversation({ conversationId }) {
+async function releaseConversation({ conversationId, accessOwnerExternalRef = null }) {
+  const existingConversation = await findConversationById(
+    conversationId,
+    null,
+    accessOwnerExternalRef
+  );
+
+  if (!existingConversation) {
+    throw new AppError("Conversacion no encontrada.", 404);
+  }
+
   const conversation = await resumeConversationByBot(conversationId);
 
   if (!conversation) {
