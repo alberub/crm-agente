@@ -121,6 +121,10 @@ module.exports = {
   metaAccessToken: cleanEnvValue(process.env.META_ACCESS_TOKEN),
   openAiApiKey: cleanEnvValue(process.env.OPENAI_API_KEY),
   openAiModel: cleanEnvValue(process.env.OPENAI_MODEL) || "gpt-5-mini",
+  floristAgentBaseUrl:
+    cleanEnvValue(process.env.FLORIST_AGENT_BASE_URL) ||
+    cleanEnvValue(process.env.FLOREST_AGENT_BASE_URL) ||
+    "http://localhost:3000",
   localEnvPath,
   validateEnv,
 };

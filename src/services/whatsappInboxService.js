@@ -13,6 +13,7 @@ const {
 } = require("../repositories/conversationReadRepository");
 const {
   listMessagesByConversationId,
+  findLatestMessageByConversationId,
   saveMessage,
 } = require("../repositories/messageRepository");
 const {
@@ -21,6 +22,7 @@ const {
 } = require("../repositories/conversationEventRepository");
 const { findLatestOrderByConversationId } = require("../repositories/orderRepository");
 const { buildConversationSalesSnapshot } = require("./salesInsightService");
+const { requestBotReplyForConversation } = require("./floristAgentService");
 const { sendWhatsAppTextMessage } = require("./metaService");
 const { AppError } = require("../utils/errors");
 const { serializeDbTimestamp } = require("../utils/datetime");
@@ -544,9 +546,35 @@ async function releaseConversation({ conversationId, accessOwnerExternalRef = nu
     });
   }
 
+  let botAutomation = null;
+
+  if (isBotResponseEnabled(conversation)) {
+    const latestMessage = await findLatestMessageByConversationId(conversationId);
+    const latestRole = String(latestMessage?.rol || "").trim().toLowerCase();
+
+    if (latestRole === "user") {
+      try {
+        botAutomation = await requestBotReplyForConversation({
+          conversationId,
+        });
+      } catch (error) {
+        botAutomation = {
+          ok: false,
+          error: error.message,
+        };
+      }
+    } else {
+      botAutomation = {
+        ok: true,
+        skipped: "last_message_not_customer",
+      };
+    }
+  }
+
   return {
     conversation,
     botEnabled: isBotResponseEnabled(conversation),
+    botAutomation,
   };
 }
 

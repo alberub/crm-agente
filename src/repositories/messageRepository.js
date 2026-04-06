@@ -46,7 +46,27 @@ async function saveMessage({ conversationId, role, message }) {
   return mapMessage(result.rows[0]);
 }
 
+async function findLatestMessageByConversationId(conversationId) {
+  const result = await db.query(
+    `
+      SELECT id, conversacion_id, rol, mensaje, fecha
+      FROM public.mensajes
+      WHERE conversacion_id = $1
+      ORDER BY fecha DESC, id DESC
+      LIMIT 1
+    `,
+    [conversationId]
+  );
+
+  if (!result.rows.length) {
+    return null;
+  }
+
+  return mapMessage(result.rows[0]);
+}
+
 module.exports = {
   listMessagesByConversationId,
+  findLatestMessageByConversationId,
   saveMessage,
 };
