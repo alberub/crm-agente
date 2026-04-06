@@ -95,7 +95,7 @@ function buildConversationTimeline({ messages, events }) {
     }
 
     if (left.type !== right.type) {
-      return left.type === "event" ? -1 : 1;
+      return left.type === "message" ? -1 : 1;
     }
 
     return left.id - right.id;
