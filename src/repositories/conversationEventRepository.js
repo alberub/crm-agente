@@ -62,7 +62,7 @@ async function createConversationEvent({
         payload_json,
         occurred_at
       )
-      VALUES ($1, $2, $3, $4, $5::jsonb, COALESCE($6::timestamptz, timezone('America/Monterrey', now())))
+      VALUES ($1, $2, $3, $4, $5::jsonb, COALESCE($6::timestamptz, NOW()))
       RETURNING id, conversation_id, event_code, actor_type, actor_ref, payload_json, occurred_at, created_at
     `,
     [
