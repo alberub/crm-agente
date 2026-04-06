@@ -15,6 +15,10 @@ const {
   listMessagesByConversationId,
   saveMessage,
 } = require("../repositories/messageRepository");
+const {
+  listConversationEventsByConversationId,
+  createConversationEvent,
+} = require("../repositories/conversationEventRepository");
 const { findLatestOrderByConversationId } = require("../repositories/orderRepository");
 const { buildConversationSalesSnapshot } = require("./salesInsightService");
 const { sendWhatsAppTextMessage } = require("./metaService");
@@ -64,6 +68,38 @@ function resolveMessageRole(message) {
   }
 
   return "system";
+}
+
+function buildConversationTimeline({ messages, events }) {
+  const messageItems = (Array.isArray(messages) ? messages : []).map((message) => ({
+    type: "message",
+    id: Number(message.id),
+    conversationId: Number(message.conversacionId),
+    occurredAt: message.fecha || null,
+    message,
+  }));
+  const eventItems = (Array.isArray(events) ? events : []).map((event) => ({
+    type: "event",
+    id: Number(event.id),
+    conversationId: Number(event.conversationId),
+    occurredAt: event.occurredAt || null,
+    event,
+  }));
+
+  return [...messageItems, ...eventItems].sort((left, right) => {
+    const leftTime = left.occurredAt ? new Date(left.occurredAt).getTime() : 0;
+    const rightTime = right.occurredAt ? new Date(right.occurredAt).getTime() : 0;
+
+    if (leftTime !== rightTime) {
+      return leftTime - rightTime;
+    }
+
+    if (left.type !== right.type) {
+      return left.type === "event" ? -1 : 1;
+    }
+
+    return left.id - right.id;
+  });
 }
 
 function buildConversationContext({ conversation, messages, latestOrder, salesSnapshot = null }) {
@@ -244,6 +280,7 @@ async function getConversationDetail(
     listMessagesByConversationId(conversationId, messageLimit),
     findLatestOrderByConversationId(conversationId),
   ]);
+  const events = await listConversationEventsByConversationId(conversationId, Math.max(Number(messageLimit) || 120, 200));
   const preliminaryContext = buildConversationContext({
     conversation,
     messages,
@@ -263,6 +300,8 @@ async function getConversationDetail(
     },
     botEnabled: isBotResponseEnabled(conversation),
     messages,
+    events,
+    timelineItems: buildConversationTimeline({ messages, events }),
     latestOrder,
     context: buildConversationContext({
       conversation,
@@ -359,6 +398,18 @@ async function sendManualReply({
     role: outboundMessageRole,
     message: body,
   });
+  await createConversationEvent({
+    conversationId,
+    eventCode: "manual_reply_sent",
+    actorType: "human",
+    actorRef: String(humanAgentId || agentId || ""),
+    payload: {
+      messageId: storedMessage.id,
+      notifyCustomer,
+      takeOver,
+    },
+    occurredAt: storedMessage.fecha,
+  });
 
   return {
     conversation,
@@ -396,6 +447,19 @@ async function changeConversationState({
     throw new AppError("Estado de conversacion no valido.", 400);
   }
 
+  if (existingConversation.estado !== updatedConversation.estado) {
+    await createConversationEvent({
+      conversationId,
+      eventCode: "conversation_state_changed",
+      actorType: "human",
+      actorRef: accessOwnerExternalRef,
+      payload: {
+        previousState: existingConversation.estado || null,
+        nextState: updatedConversation.estado || null,
+      },
+    });
+  }
+
   return updatedConversation;
 }
 
@@ -404,6 +468,12 @@ async function getConversationStates() {
 }
 
 async function takeOverConversation({ conversationId, humanAgentId = null }) {
+  const existingConversation = await findConversationById(conversationId);
+
+  if (!existingConversation) {
+    throw new AppError("Conversacion no encontrada.", 404);
+  }
+
   const conversation = await takeConversationByHuman({
     conversationId,
     humanAgentId,
@@ -411,6 +481,18 @@ async function takeOverConversation({ conversationId, humanAgentId = null }) {
 
   if (!conversation) {
     throw new AppError("Conversacion no encontrada.", 404);
+  }
+
+  if (existingConversation.controlOwner !== "human") {
+    await createConversationEvent({
+      conversationId,
+      eventCode: "conversation_taken_by_human",
+      actorType: "human",
+      actorRef: humanAgentId ? String(humanAgentId) : null,
+      payload: {
+        humanAgentId: conversation.humanAgentId || humanAgentId || null,
+      },
+    });
   }
 
   return {
@@ -434,6 +516,16 @@ async function releaseConversation({ conversationId, accessOwnerExternalRef = nu
 
   if (!conversation) {
     throw new AppError("Conversacion no encontrada.", 404);
+  }
+
+  if (existingConversation.controlOwner !== "bot") {
+    await createConversationEvent({
+      conversationId,
+      eventCode: "conversation_released_to_bot",
+      actorType: "human",
+      actorRef: accessOwnerExternalRef,
+      payload: {},
+    });
   }
 
   return {
