@@ -3,6 +3,7 @@ const { serializeDbTimestamp } = require("../utils/datetime");
 
 const EVENT_LABELS = {
   conversation_opened_by_contact: "Conversacion iniciada por el contacto",
+  conversation_opened_by_human: "Conversacion iniciada por un asesor",
   conversation_taken_by_human: "Conversacion tomada por un asesor",
   conversation_released_to_bot: "Conversacion devuelta al bot",
   conversation_state_changed: "Estado de la conversacion actualizado",

@@ -398,6 +398,22 @@ async function sendManualReply({
     role: outboundMessageRole,
     message: body,
   });
+
+  if (Number(existingConversation.totalMensajes || 0) === 0) {
+    await createConversationEvent({
+      conversationId,
+      eventCode: "conversation_opened_by_human",
+      actorType: "human",
+      actorRef: String(humanAgentId || agentId || "") || null,
+      payload: {
+        messageId: storedMessage.id,
+        notifyCustomer,
+        takeOver,
+      },
+      occurredAt: storedMessage.fecha,
+    });
+  }
+
   await createConversationEvent({
     conversationId,
     eventCode: "manual_reply_sent",
