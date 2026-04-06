@@ -28,6 +28,7 @@ const { AppError } = require("../utils/errors");
 const { serializeDbTimestamp } = require("../utils/datetime");
 
 const HUMAN_MESSAGE_ROLES = new Set(["assistant", "agent", "human", "asesor"]);
+const CUSTOMER_MESSAGE_ROLES = new Set(["user", "customer", "cliente", "contact"]);
 const SLA_RULES = {
   humanControlMinutes: 5,
   botControlMinutes: 10,
@@ -70,6 +71,11 @@ function resolveMessageRole(message) {
   }
 
   return "system";
+}
+
+function isCustomerMessageRole(role) {
+  const normalizedRole = String(role || "").trim().toLowerCase();
+  return CUSTOMER_MESSAGE_ROLES.has(normalizedRole);
 }
 
 function buildConversationTimeline({ messages, events }) {
@@ -550,9 +556,9 @@ async function releaseConversation({ conversationId, accessOwnerExternalRef = nu
 
   if (isBotResponseEnabled(conversation)) {
     const latestMessage = await findLatestMessageByConversationId(conversationId);
-    const latestRole = String(latestMessage?.rol || "").trim().toLowerCase();
+    const latestRole = latestMessage?.rol;
 
-    if (latestRole === "user") {
+    if (isCustomerMessageRole(latestRole)) {
       try {
         botAutomation = await requestBotReplyForConversation({
           conversationId,
