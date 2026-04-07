@@ -29,6 +29,8 @@ const { serializeDbTimestamp } = require("../utils/datetime");
 
 const HUMAN_MESSAGE_ROLES = new Set(["assistant", "agent", "human", "asesor"]);
 const CUSTOMER_MESSAGE_ROLES = new Set(["user", "customer", "cliente", "contact"]);
+const BOT_AUTOMATION_MAX_ATTEMPTS = 3;
+const BOT_AUTOMATION_RETRY_DELAYS_MS = [0, 350, 900];
 const SLA_RULES = {
   humanControlMinutes: 5,
   botControlMinutes: 10,
@@ -76,6 +78,82 @@ function resolveMessageRole(message) {
 function isCustomerMessageRole(role) {
   const normalizedRole = String(role || "").trim().toLowerCase();
   return CUSTOMER_MESSAGE_ROLES.has(normalizedRole);
+}
+
+function delay(ms) {
+  if (!ms || ms <= 0) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function requestBotReplyWithRetry(conversationId) {
+  let latestMessage = await findLatestMessageByConversationId(conversationId);
+
+  if (!isCustomerMessageRole(latestMessage?.rol)) {
+    return {
+      ok: true,
+      skipped: "last_message_not_customer",
+      latestRole: latestMessage?.rol || null,
+      attempts: 0,
+    };
+  }
+
+  let lastResult = null;
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= BOT_AUTOMATION_MAX_ATTEMPTS; attempt += 1) {
+    await delay(BOT_AUTOMATION_RETRY_DELAYS_MS[attempt - 1] || 0);
+
+    latestMessage = await findLatestMessageByConversationId(conversationId);
+
+    if (!isCustomerMessageRole(latestMessage?.rol)) {
+      return {
+        ok: true,
+        skipped: "last_message_not_customer",
+        latestRole: latestMessage?.rol || null,
+        attempts: attempt,
+      };
+    }
+
+    try {
+      lastResult = await requestBotReplyForConversation({
+        conversationId,
+        forceReply: true,
+      });
+
+      if (!lastResult || lastResult.ok !== true) {
+        continue;
+      }
+
+      if (lastResult.skipped === "last_message_not_customer") {
+        continue;
+      }
+
+      return {
+        ...lastResult,
+        attempts: attempt,
+      };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  if (lastResult) {
+    return {
+      ...lastResult,
+      attempts: BOT_AUTOMATION_MAX_ATTEMPTS,
+    };
+  }
+
+  return {
+    ok: false,
+    error: lastError?.message || "No se pudo solicitar respuesta automatica al bot.",
+    attempts: BOT_AUTOMATION_MAX_ATTEMPTS,
+  };
 }
 
 function buildConversationTimeline({ messages, events }) {
@@ -555,26 +633,7 @@ async function releaseConversation({ conversationId, accessOwnerExternalRef = nu
   let botAutomation = null;
 
   if (isBotResponseEnabled(conversation)) {
-    const latestMessage = await findLatestMessageByConversationId(conversationId);
-    const latestRole = latestMessage?.rol;
-
-    if (isCustomerMessageRole(latestRole)) {
-      try {
-        botAutomation = await requestBotReplyForConversation({
-          conversationId,
-        });
-      } catch (error) {
-        botAutomation = {
-          ok: false,
-          error: error.message,
-        };
-      }
-    } else {
-      botAutomation = {
-        ok: true,
-        skipped: "last_message_not_customer",
-      };
-    }
+    botAutomation = await requestBotReplyWithRetry(conversationId);
   }
 
   return {

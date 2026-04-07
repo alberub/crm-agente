@@ -10,6 +10,7 @@ function resolveBaseUrl() {
 async function requestBotReplyForConversation({
   conversationId,
   timeoutMs = 12000,
+  forceReply = false,
 }) {
   const baseUrl = resolveBaseUrl();
 
@@ -32,6 +33,7 @@ async function requestBotReplyForConversation({
       body: JSON.stringify({
         conversationId,
         deliverToCustomer: true,
+        forceReply,
       }),
       signal: controller.signal,
     });
