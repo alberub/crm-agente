@@ -128,6 +128,24 @@ function delay(ms) {
   });
 }
 
+async function requestFallbackBotReply({
+  conversationId,
+  conversation,
+  message,
+}) {
+  const recentMessages = await listMessagesByConversationId(conversationId, 120);
+
+  return requestBotReplyFromText({
+    message,
+    nombreCliente: conversation?.nombreCliente || null,
+    customerId: conversation?.clienteId || null,
+    conversationId,
+    conversationStateId: conversation?.estadoId || null,
+    conversationCategoryId: conversation?.categoriaId || null,
+    recentMessages,
+  });
+}
+
 async function requestBotReplyWithRetry(conversation) {
   const conversationId = Number(conversation?.id);
 
@@ -204,9 +222,10 @@ async function requestBotReplyWithRetry(conversation) {
     }
 
     try {
-      const draftResult = await requestBotReplyFromText({
+      const draftResult = await requestFallbackBotReply({
+        conversationId,
+        conversation,
         message: fallbackMessage,
-        nombreCliente: conversation?.nombreCliente || null,
       });
 
       const fallbackReply = String(draftResult?.reply || "").trim();
@@ -255,9 +274,10 @@ async function requestBotReplyWithRetry(conversation) {
   }
 
   try {
-    const draftResult = await requestBotReplyFromText({
+    const draftResult = await requestFallbackBotReply({
+      conversationId,
+      conversation,
       message: fallbackMessage,
-      nombreCliente: conversation?.nombreCliente || null,
     });
 
     const fallbackReply = String(draftResult?.reply || "").trim();

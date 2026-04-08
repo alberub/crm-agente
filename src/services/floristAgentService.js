@@ -55,6 +55,12 @@ async function requestBotReplyForConversation({
 async function requestBotReplyFromText({
   message,
   nombreCliente = null,
+  telefono = null,
+  customerId = null,
+  conversationId = null,
+  conversationStateId = null,
+  conversationCategoryId = null,
+  recentMessages = [],
   timeoutMs = 12000,
 }) {
   const baseUrl = resolveBaseUrl();
@@ -87,6 +93,12 @@ async function requestBotReplyFromText({
       body: JSON.stringify({
         message: normalizedMessage,
         nombreCliente: nombreCliente || undefined,
+        telefono: telefono || undefined,
+        customerId: customerId || undefined,
+        conversationId: conversationId || undefined,
+        conversationStateId: conversationStateId || undefined,
+        conversationCategoryId: conversationCategoryId || undefined,
+        recentMessages: Array.isArray(recentMessages) ? recentMessages : undefined,
       }),
       signal: controller.signal,
     });
