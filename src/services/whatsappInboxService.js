@@ -22,13 +22,25 @@ const {
 } = require("../repositories/conversationEventRepository");
 const { findLatestOrderByConversationId } = require("../repositories/orderRepository");
 const { buildConversationSalesSnapshot } = require("./salesInsightService");
-const { requestBotReplyForConversation } = require("./floristAgentService");
+const {
+  requestBotReplyForConversation,
+  requestBotReplyFromText,
+} = require("./floristAgentService");
 const { sendWhatsAppTextMessage } = require("./metaService");
 const { AppError } = require("../utils/errors");
 const { serializeDbTimestamp } = require("../utils/datetime");
 
 const HUMAN_MESSAGE_ROLES = new Set(["assistant", "agent", "human", "asesor"]);
-const CUSTOMER_MESSAGE_ROLES = new Set(["user", "customer", "cliente", "contact"]);
+const CUSTOMER_MESSAGE_ROLES = new Set([
+  "user",
+  "customer",
+  "cliente",
+  "contact",
+  "contacto",
+  "usuario",
+  "inbound",
+  "incoming",
+]);
 const BOT_AUTOMATION_MAX_ATTEMPTS = 3;
 const BOT_AUTOMATION_RETRY_DELAYS_MS = [0, 350, 900];
 const SLA_RULES = {
@@ -77,7 +89,33 @@ function resolveMessageRole(message) {
 
 function isCustomerMessageRole(role) {
   const normalizedRole = String(role || "").trim().toLowerCase();
-  return CUSTOMER_MESSAGE_ROLES.has(normalizedRole);
+
+  if (!normalizedRole) {
+    return false;
+  }
+
+  if (CUSTOMER_MESSAGE_ROLES.has(normalizedRole)) {
+    return true;
+  }
+
+  if (normalizedRole === "bot") {
+    return false;
+  }
+
+  if (HUMAN_MESSAGE_ROLES.has(normalizedRole) || normalizedRole === outboundMessageRole) {
+    return false;
+  }
+
+  if (normalizedRole === "system" || normalizedRole === "evento" || normalizedRole === "event") {
+    return false;
+  }
+
+  return (
+    normalizedRole.includes("user") ||
+    normalizedRole.includes("client") ||
+    normalizedRole.includes("cliente") ||
+    normalizedRole.includes("contact")
+  );
 }
 
 function delay(ms) {
@@ -90,7 +128,17 @@ function delay(ms) {
   });
 }
 
-async function requestBotReplyWithRetry(conversationId) {
+async function requestBotReplyWithRetry(conversation) {
+  const conversationId = Number(conversation?.id);
+
+  if (!Number.isInteger(conversationId) || conversationId <= 0) {
+    return {
+      ok: false,
+      error: "conversation_id_invalido",
+      attempts: 0,
+    };
+  }
+
   let latestMessage = await findLatestMessageByConversationId(conversationId);
 
   if (!isCustomerMessageRole(latestMessage?.rol)) {
@@ -143,17 +191,105 @@ async function requestBotReplyWithRetry(conversationId) {
   }
 
   if (lastResult) {
-    return {
+    const exhaustedResult = {
       ...lastResult,
       attempts: BOT_AUTOMATION_MAX_ATTEMPTS,
     };
+
+    const fallbackMessage = String(latestMessage?.mensaje || "").trim();
+    const fallbackPhone = String(conversation?.telefonoCliente || "").trim();
+
+    if (!fallbackMessage || !fallbackPhone) {
+      return exhaustedResult;
+    }
+
+    try {
+      const draftResult = await requestBotReplyFromText({
+        message: fallbackMessage,
+        nombreCliente: conversation?.nombreCliente || null,
+      });
+
+      const fallbackReply = String(draftResult?.reply || "").trim();
+
+      if (!fallbackReply) {
+        return exhaustedResult;
+      }
+
+      const storedReply = await saveMessage({
+        conversationId,
+        role: "bot",
+        message: fallbackReply,
+      });
+
+      await sendWhatsAppTextMessage(fallbackPhone, fallbackReply);
+
+      return {
+        ok: true,
+        delivered: true,
+        fallback: "crm_text_reply",
+        reply: fallbackReply,
+        messageId: storedReply.id,
+        attempts: BOT_AUTOMATION_MAX_ATTEMPTS,
+        upstream: exhaustedResult,
+      };
+    } catch (error) {
+      return {
+        ...exhaustedResult,
+        fallback: "crm_text_reply_failed",
+        fallbackError: error?.message || null,
+      };
+    }
   }
 
-  return {
+  const baseFailure = {
     ok: false,
     error: lastError?.message || "No se pudo solicitar respuesta automatica al bot.",
     attempts: BOT_AUTOMATION_MAX_ATTEMPTS,
   };
+
+  const fallbackMessage = String(latestMessage?.mensaje || "").trim();
+  const fallbackPhone = String(conversation?.telefonoCliente || "").trim();
+
+  if (!fallbackMessage || !fallbackPhone) {
+    return baseFailure;
+  }
+
+  try {
+    const draftResult = await requestBotReplyFromText({
+      message: fallbackMessage,
+      nombreCliente: conversation?.nombreCliente || null,
+    });
+
+    const fallbackReply = String(draftResult?.reply || "").trim();
+
+    if (!fallbackReply) {
+      return baseFailure;
+    }
+
+    const storedReply = await saveMessage({
+      conversationId,
+      role: "bot",
+      message: fallbackReply,
+    });
+
+    await sendWhatsAppTextMessage(fallbackPhone, fallbackReply);
+
+    return {
+      ok: true,
+      delivered: true,
+      fallback: "crm_text_reply",
+      reply: fallbackReply,
+      messageId: storedReply.id,
+      attempts: BOT_AUTOMATION_MAX_ATTEMPTS,
+      upstream: baseFailure,
+    };
+  } catch (error) {
+    return {
+      ...baseFailure,
+      fallback: "crm_text_reply_failed",
+      fallbackError: error?.message || null,
+    };
+  }
 }
 
 function buildConversationTimeline({ messages, events }) {
@@ -633,7 +769,7 @@ async function releaseConversation({ conversationId, accessOwnerExternalRef = nu
   let botAutomation = null;
 
   if (isBotResponseEnabled(conversation)) {
-    botAutomation = await requestBotReplyWithRetry(conversationId);
+    botAutomation = await requestBotReplyWithRetry(conversation);
   }
 
   return {
