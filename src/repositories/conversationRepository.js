@@ -1,6 +1,23 @@
 const db = require("../db");
 const { serializeDbTimestamp } = require("../utils/datetime");
 
+function parseJsonList(value) {
+  if (!value) {
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    return value;
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_error) {
+    return [];
+  }
+}
+
 function mapConversation(row) {
   const controlOwner = row.control_owner || "bot";
   const botPaused = Boolean(row.bot_paused);
@@ -34,6 +51,8 @@ function mapConversation(row) {
     nextFollowupAt: serializeDbTimestamp(row.lead_next_followup_at),
     ownerExternalRef: row.lead_owner_external_ref || null,
     ownerName: row.lead_owner_name || null,
+    interestSummary: row.lead_interest_summary || null,
+    tags: parseJsonList(row.tags_json),
     salesStageCode: row.sales_stage_code || null,
     salesStageName: row.sales_stage_name || null,
     nextAction: row.lead_next_action || null,
@@ -83,21 +102,56 @@ function buildFilters({
     conditions.push(`c.activa = $${params.length}`);
   }
 
-  if (search) {
-    params.push(`%${search.trim()}%`);
+  const trimmedSearch = String(search || "").trim();
+
+  if (trimmedSearch) {
+    params.push(`%${trimmedSearch}%`);
     const index = params.length;
+    const searchClauses = [
+      `cl.nombre ILIKE $${index}`,
+      `cl.telefono ILIKE $${index}`,
+      `c.estado ILIKE $${index}`,
+      `ci.nombre ILIKE $${index}`,
+      `cc.tipo_categoria ILIKE $${index}`,
+      `ss.name ILIKE $${index}`,
+      `ss.code ILIKE $${index}`,
+      `owner.full_name ILIKE $${index}`,
+      `owner.external_ref ILIKE $${index}`,
+      `l.status ILIKE $${index}`,
+      `l.priority ILIKE $${index}`,
+      `l.interest_summary ILIKE $${index}`,
+      `l.next_action ILIKE $${index}`,
+      `EXISTS (
+        SELECT 1
+        FROM public.lead_tags search_lead_tag
+        JOIN public.cat_tags search_tag
+          ON search_tag.id = search_lead_tag.tag_id
+        WHERE search_lead_tag.lead_id = l.id
+          AND (
+            search_tag.nombre ILIKE $${index}
+            OR search_tag.slug ILIKE $${index}
+          )
+      )`,
+      `EXISTS (
+        SELECT 1
+        FROM public.mensajes search_message
+        WHERE search_message.conversacion_id = c.id
+          AND search_message.mensaje ILIKE $${index}
+      )`,
+    ];
+    const numericSearch = trimmedSearch.replace(/\D/g, "");
+
+    if (numericSearch) {
+      params.push(`%${numericSearch}%`);
+      const numericIndex = params.length;
+      searchClauses.push(
+        `regexp_replace(COALESCE(cl.telefono, ''), '\\D', '', 'g') LIKE $${numericIndex}`
+      );
+    }
 
     conditions.push(`
       (
-        cl.nombre ILIKE $${index}
-        OR cl.telefono ILIKE $${index}
-        OR c.estado ILIKE $${index}
-        OR EXISTS (
-          SELECT 1
-          FROM public.mensajes search_message
-          WHERE search_message.conversacion_id = c.id
-            AND search_message.mensaje ILIKE $${index}
-        )
+        ${searchClauses.join("\n        OR ")}
       )
     `);
   }
@@ -184,6 +238,7 @@ async function listConversations({
         l.status AS lead_status,
         l.next_followup_at AS lead_next_followup_at,
         l.next_action AS lead_next_action,
+        l.interest_summary AS lead_interest_summary,
         l.estimated_value AS lead_estimated_value,
         l.ai_score AS lead_ai_score,
         l.ai_score_reasons_json AS lead_ai_score_reasons_json,
@@ -192,6 +247,7 @@ async function listConversations({
         ss.name AS sales_stage_name,
         owner.external_ref AS lead_owner_external_ref,
         owner.full_name AS lead_owner_name,
+        tags.tags_json,
         CASE
           WHEN $${agentIndex}::text IS NULL THEN FALSE
           ELSE COALESCE(unread_totals.unread_count, 0) > 0
@@ -228,6 +284,30 @@ async function listConversations({
         ON ss.id = l.sales_stage_id
       LEFT JOIN public.crm_user owner
         ON owner.id = l.owner_user_id
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(
+          json_agg(
+            json_build_object(
+              'id', ct.id,
+              'name', ct.nombre,
+              'slug', ct.slug,
+              'category', ct.categoria,
+              'color', ct.color,
+              'active', ct.activo,
+              'marketingEnabled', ct.marketing_habilitado,
+              'origin', lt.origen,
+              'confidence', lt.confianza,
+              'createdAt', lt.fecha_creacion
+            )
+            ORDER BY ct.nombre ASC
+          ),
+          '[]'::json
+        ) AS tags_json
+        FROM public.lead_tags lt
+        JOIN public.cat_tags ct
+          ON ct.id = lt.tag_id
+        WHERE lt.lead_id = l.id
+      ) AS tags ON TRUE
       LEFT JOIN LATERAL (
         SELECT COUNT(*) AS unread_count
         FROM public.mensajes m
@@ -279,6 +359,7 @@ async function findConversationById(conversationId, agentId = null, ownerExterna
         l.status AS lead_status,
         l.next_followup_at AS lead_next_followup_at,
         l.next_action AS lead_next_action,
+        l.interest_summary AS lead_interest_summary,
         l.estimated_value AS lead_estimated_value,
         l.ai_score AS lead_ai_score,
         l.ai_score_reasons_json AS lead_ai_score_reasons_json,
@@ -287,6 +368,7 @@ async function findConversationById(conversationId, agentId = null, ownerExterna
         ss.name AS sales_stage_name,
         owner.external_ref AS lead_owner_external_ref,
         owner.full_name AS lead_owner_name,
+        tags.tags_json,
         CASE
           WHEN $2::text IS NULL THEN FALSE
           ELSE COALESCE(unread_totals.unread_count, 0) > 0
@@ -323,6 +405,30 @@ async function findConversationById(conversationId, agentId = null, ownerExterna
         ON ss.id = l.sales_stage_id
       LEFT JOIN public.crm_user owner
         ON owner.id = l.owner_user_id
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(
+          json_agg(
+            json_build_object(
+              'id', ct.id,
+              'name', ct.nombre,
+              'slug', ct.slug,
+              'category', ct.categoria,
+              'color', ct.color,
+              'active', ct.activo,
+              'marketingEnabled', ct.marketing_habilitado,
+              'origin', lt.origen,
+              'confidence', lt.confianza,
+              'createdAt', lt.fecha_creacion
+            )
+            ORDER BY ct.nombre ASC
+          ),
+          '[]'::json
+        ) AS tags_json
+        FROM public.lead_tags lt
+        JOIN public.cat_tags ct
+          ON ct.id = lt.tag_id
+        WHERE lt.lead_id = l.id
+      ) AS tags ON TRUE
       LEFT JOIN LATERAL (
         SELECT COUNT(*) AS unread_count
         FROM public.mensajes m

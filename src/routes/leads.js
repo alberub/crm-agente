@@ -6,6 +6,9 @@ const {
   listLeads,
   findLeadById,
   findLeadByIdForOwner,
+  listTags,
+  createTag,
+  setLeadTags,
   updateLead,
 } = require("../repositories/leadRepository");
 const { AppError } = require("../utils/errors");
@@ -20,6 +23,12 @@ function parseLeadId(value) {
   }
 
   return leadId;
+}
+
+function assignIfPresent(target, source, key) {
+  if (Object.prototype.hasOwnProperty.call(source, key)) {
+    target[key] = source[key];
+  }
 }
 
 function handleLeadErrors(error, next) {
@@ -38,8 +47,53 @@ function handleLeadErrors(error, next) {
     return true;
   }
 
+  if (error.message === "INVALID_TAG_NAME") {
+    next(new AppError("El tag debe tener nombre.", 400));
+    return true;
+  }
+
+  if (error.message === "INVALID_TAG_ID") {
+    next(new AppError("Uno o mas tags no existen o estan inactivos.", 400));
+    return true;
+  }
+
   return false;
 }
+
+router.get("/api/tags", async (req, res, next) => {
+  try {
+    const tags = await listTags({
+      search: String(req.query.search || ""),
+      activeOnly: String(req.query.active || "true").toLowerCase() !== "false",
+      marketingOnly: String(req.query.marketing || "").toLowerCase() === "true",
+      limit: req.query.limit,
+    });
+
+    res.status(200).json({ tags });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/api/tags", requireRoles(["admin", "manager", "agent"]), async (req, res, next) => {
+  try {
+    const tag = await createTag({
+      name: req.body.name,
+      slug: req.body.slug,
+      category: req.body.category,
+      color: req.body.color,
+      marketingEnabled: req.body.marketingEnabled,
+    });
+
+    res.status(201).json({ tag });
+  } catch (error) {
+    if (handleLeadErrors(error, next)) {
+      return;
+    }
+
+    next(error);
+  }
+});
 
 router.get("/api/leads", async (req, res, next) => {
   try {
@@ -51,6 +105,7 @@ router.get("/api/leads", async (req, res, next) => {
       stageCode: String(req.query.stageCode || "").trim() || null,
       status: String(req.query.status || "").trim() || null,
       ownerExternalRef: scopedOwnerExternalRef,
+      tagSlug: String(req.query.tag || "").trim() || null,
       followupDueOnly: String(req.query.followupDue || "").toLowerCase() === "true",
       limit: req.query.limit,
     });
@@ -124,14 +179,22 @@ router.post("/api/leads/from-conversation/:conversationId", async (req, res, nex
 router.patch("/api/leads/:id", requireRoles(["admin", "manager", "agent"]), async (req, res, next) => {
   try {
     const leadId = parseLeadId(req.params.id);
+    const patch = {};
+
+    assignIfPresent(patch, req.body, "estimatedValue");
+    assignIfPresent(patch, req.body, "nextAction");
+    assignIfPresent(patch, req.body, "nextFollowupAt");
+    assignIfPresent(patch, req.body, "lossReason");
+    assignIfPresent(patch, req.body, "interestSummary");
+    assignIfPresent(patch, req.body, "contactName");
+    assignIfPresent(patch, req.body, "contactPhone");
+    assignIfPresent(patch, req.body, "ownerExternalRef");
+    assignIfPresent(patch, req.body, "ownerName");
+    assignIfPresent(patch, req.body, "ownerEmail");
+
     const lead = await updateLead({
       leadId,
-      patch: {
-        estimatedValue: req.body.estimatedValue,
-        nextAction: req.body.nextAction,
-        nextFollowupAt: req.body.nextFollowupAt,
-        lossReason: req.body.lossReason,
-      },
+      patch,
       actorRef: req.auth.actorRef,
       ownerExternalRef: isOwnScopeRole(req.auth.user?.roleCode) ? req.auth.actorRef : null,
     });
@@ -183,5 +246,31 @@ router.patch(
   }
   }
 );
+
+router.put("/api/leads/:id/tags", requireRoles(["admin", "manager", "agent"]), async (req, res, next) => {
+  try {
+    const leadId = parseLeadId(req.params.id);
+    const lead = await setLeadTags({
+      leadId,
+      tagIds: Array.isArray(req.body.tagIds) ? req.body.tagIds : [],
+      origin: String(req.body.origin || "manual").trim(),
+      confidence: req.body.confidence ?? null,
+      actorRef: req.auth.actorRef,
+      ownerExternalRef: isOwnScopeRole(req.auth.user?.roleCode) ? req.auth.actorRef : null,
+    });
+
+    if (!lead) {
+      throw new AppError("Lead no encontrado.", 404);
+    }
+
+    res.status(200).json({ lead });
+  } catch (error) {
+    if (handleLeadErrors(error, next)) {
+      return;
+    }
+
+    next(error);
+  }
+});
 
 module.exports = router;

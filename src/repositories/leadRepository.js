@@ -22,6 +22,34 @@ function toNumberOrNull(value) {
   return value === null || value === undefined ? null : Number(value);
 }
 
+function normalizeText(value) {
+  const normalized = String(value || "").trim();
+  return normalized.length ? normalized : null;
+}
+
+function normalizeSlug(value) {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+  return normalized.length ? normalized : null;
+}
+
+function mapTagRow(row) {
+  return {
+    id: Number(row.id),
+    name: row.nombre,
+    slug: row.slug,
+    category: row.categoria || "interes",
+    color: row.color || "gray",
+    active: Boolean(row.activo),
+    marketingEnabled: Boolean(row.marketing_habilitado),
+    createdAt: serializeDbTimestamp(row.fecha_creacion),
+  };
+}
+
 function mapLeadTaskRow(row) {
   return {
     id: Number(row.id),
@@ -107,6 +135,7 @@ function mapLeadRow(row) {
     updatedAt: serializeDbTimestamp(row.lead_updated_at),
     salesStageManualOverride: Boolean(row.sales_stage_manual_override),
     nextActionManualOverride: Boolean(row.next_action_manual_override),
+    tags: parseJsonList(row.tags_json),
     conversation: row.conversation_id
       ? {
           id: Number(row.conversation_id),
@@ -254,7 +283,8 @@ async function findLeadById(leadId) {
         cl.nombre AS contact_name,
         cl.telefono AS contact_phone,
         lm.mensaje AS last_message_body,
-        lm.fecha AS last_message_at
+        lm.fecha AS last_message_at,
+        tags.tags_json
       FROM public.lead l
       LEFT JOIN public.sales_stage ss
         ON ss.id = l.sales_stage_id
@@ -271,6 +301,30 @@ async function findLeadById(leadId) {
         ORDER BY m.fecha DESC, m.id DESC
         LIMIT 1
       ) lm ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(
+          json_agg(
+            json_build_object(
+              'id', ct.id,
+              'name', ct.nombre,
+              'slug', ct.slug,
+              'category', ct.categoria,
+              'color', ct.color,
+              'active', ct.activo,
+              'marketingEnabled', ct.marketing_habilitado,
+              'origin', lt.origen,
+              'confidence', lt.confianza,
+              'createdAt', lt.fecha_creacion
+            )
+            ORDER BY ct.nombre ASC
+          ),
+          '[]'::json
+        ) AS tags_json
+        FROM public.lead_tags lt
+        JOIN public.cat_tags ct
+          ON ct.id = lt.tag_id
+        WHERE lt.lead_id = l.id
+      ) tags ON TRUE
       WHERE l.id = $1
       LIMIT 1
     `,
@@ -356,11 +410,185 @@ async function ensureLeadByConversationId(conversationId) {
   return findLeadByConversationId(conversationId);
 }
 
+async function listTags({
+  search = "",
+  activeOnly = true,
+  marketingOnly = false,
+  limit = 200,
+} = {}) {
+  const safeLimit = Math.min(Math.max(Number(limit) || 200, 1), 500);
+  const params = [];
+  const conditions = [];
+
+  if (activeOnly) {
+    conditions.push("activo = TRUE");
+  }
+
+  if (marketingOnly) {
+    conditions.push("marketing_habilitado = TRUE");
+  }
+
+  if (search && search.trim()) {
+    params.push(`%${search.trim()}%`);
+    conditions.push(`(nombre ILIKE $${params.length} OR slug ILIKE $${params.length})`);
+  }
+
+  params.push(safeLimit);
+  const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  const result = await db.query(
+    `
+      SELECT id, nombre, slug, categoria, color, activo, marketing_habilitado, fecha_creacion
+      FROM public.cat_tags
+      ${whereClause}
+      ORDER BY categoria ASC, nombre ASC
+      LIMIT $${params.length}
+    `,
+    params
+  );
+
+  return result.rows.map(mapTagRow);
+}
+
+async function createTag({
+  name,
+  slug = null,
+  category = "interes",
+  color = "gray",
+  marketingEnabled = true,
+}) {
+  const normalizedName = normalizeText(name);
+  const normalizedSlug = normalizeSlug(slug || name);
+
+  if (!normalizedName || !normalizedSlug) {
+    throw new Error("INVALID_TAG_NAME");
+  }
+
+  const result = await db.query(
+    `
+      INSERT INTO public.cat_tags (
+        nombre,
+        slug,
+        categoria,
+        color,
+        marketing_habilitado
+      )
+      VALUES ($1, $2, $3, $4, $5)
+      ON CONFLICT (slug) DO UPDATE
+      SET nombre = EXCLUDED.nombre,
+          categoria = EXCLUDED.categoria,
+          color = EXCLUDED.color,
+          marketing_habilitado = EXCLUDED.marketing_habilitado
+      RETURNING id, nombre, slug, categoria, color, activo, marketing_habilitado, fecha_creacion
+    `,
+    [
+      normalizedName,
+      normalizedSlug,
+      normalizeText(category) || "interes",
+      normalizeText(color) || "gray",
+      Boolean(marketingEnabled),
+    ]
+  );
+
+  return mapTagRow(result.rows[0]);
+}
+
+async function setLeadTags({
+  leadId,
+  tagIds = [],
+  origin = "manual",
+  confidence = null,
+  actorRef = null,
+  ownerExternalRef = null,
+}) {
+  const current = ownerExternalRef
+    ? await findLeadByIdForOwner(leadId, ownerExternalRef)
+    : await findLeadById(leadId);
+
+  if (!current) {
+    return null;
+  }
+
+  const normalizedOrigin = ["manual", "ia", "sistema"].includes(origin) ? origin : "manual";
+  const normalizedConfidence =
+    confidence === null || confidence === undefined || confidence === ""
+      ? null
+      : Math.min(Math.max(Number(confidence), 0), 1);
+  const uniqueTagIds = [...new Set(
+    (Array.isArray(tagIds) ? tagIds : [])
+      .map((tagId) => Number(tagId))
+      .filter((tagId) => Number.isInteger(tagId) && tagId > 0)
+  )];
+  const client = await db.pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    if (uniqueTagIds.length) {
+      const tagResult = await client.query(
+        `
+          SELECT id
+          FROM public.cat_tags
+          WHERE id = ANY($1::bigint[])
+            AND activo = TRUE
+        `,
+        [uniqueTagIds]
+      );
+      const validTagIds = new Set(tagResult.rows.map((row) => Number(row.id)));
+      const invalidTagId = uniqueTagIds.find((tagId) => !validTagIds.has(tagId));
+
+      if (invalidTagId) {
+        throw new Error("INVALID_TAG_ID");
+      }
+    }
+
+    await client.query(
+      `
+        DELETE FROM public.lead_tags
+        WHERE lead_id = $1
+          AND NOT (tag_id = ANY($2::bigint[]))
+      `,
+      [leadId, uniqueTagIds]
+    );
+
+    for (const tagId of uniqueTagIds) {
+      await client.query(
+        `
+          INSERT INTO public.lead_tags (lead_id, tag_id, origen, confianza)
+          VALUES ($1, $2, $3, $4)
+          ON CONFLICT (lead_id, tag_id) DO UPDATE
+          SET origen = EXCLUDED.origen,
+              confianza = EXCLUDED.confianza
+        `,
+        [leadId, tagId, normalizedOrigin, normalizedConfidence]
+      );
+    }
+
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  await insertAuditLog({
+    entityType: "lead",
+    entityId: leadId,
+    action: "lead.tags.updated",
+    performedBy: actorRef,
+    oldValue: { tags: current.tags || [] },
+    newValue: { tagIds: uniqueTagIds },
+  });
+
+  return findLeadById(leadId);
+}
+
 async function listLeads({
   search = "",
   stageCode = null,
   status = null,
   ownerExternalRef = null,
+  tagSlug = null,
   followupDueOnly = false,
   limit = 120,
 }) {
@@ -379,6 +607,17 @@ async function listLeads({
         OR c.estado ILIKE $${index}
         OR ss.name ILIKE $${index}
         OR ss.code ILIKE $${index}
+        OR EXISTS (
+          SELECT 1
+          FROM public.lead_tags search_lead_tag
+          JOIN public.cat_tags search_tag
+            ON search_tag.id = search_lead_tag.tag_id
+          WHERE search_lead_tag.lead_id = l.id
+            AND (
+              search_tag.nombre ILIKE $${index}
+              OR search_tag.slug ILIKE $${index}
+            )
+        )
       )
     `);
   }
@@ -396,6 +635,20 @@ async function listLeads({
   if (ownerExternalRef) {
     params.push(String(ownerExternalRef).trim());
     conditions.push(`owner.external_ref = $${params.length}`);
+  }
+
+  if (tagSlug) {
+    params.push(String(tagSlug).trim());
+    conditions.push(`
+      EXISTS (
+        SELECT 1
+        FROM public.lead_tags filter_lead_tag
+        JOIN public.cat_tags filter_tag
+          ON filter_tag.id = filter_lead_tag.tag_id
+        WHERE filter_lead_tag.lead_id = l.id
+          AND filter_tag.slug = $${params.length}
+      )
+    `);
   }
 
   if (followupDueOnly) {
@@ -445,7 +698,8 @@ async function listLeads({
         cl.nombre AS contact_name,
         cl.telefono AS contact_phone,
         lm.mensaje AS last_message_body,
-        lm.fecha AS last_message_at
+        lm.fecha AS last_message_at,
+        tags.tags_json
       FROM public.lead l
       LEFT JOIN public.sales_stage ss
         ON ss.id = l.sales_stage_id
@@ -462,6 +716,30 @@ async function listLeads({
         ORDER BY m.fecha DESC, m.id DESC
         LIMIT 1
       ) lm ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(
+          json_agg(
+            json_build_object(
+              'id', ct.id,
+              'name', ct.nombre,
+              'slug', ct.slug,
+              'category', ct.categoria,
+              'color', ct.color,
+              'active', ct.activo,
+              'marketingEnabled', ct.marketing_habilitado,
+              'origin', lt.origen,
+              'confidence', lt.confianza,
+              'createdAt', lt.fecha_creacion
+            )
+            ORDER BY ct.nombre ASC
+          ),
+          '[]'::json
+        ) AS tags_json
+        FROM public.lead_tags lt
+        JOIN public.cat_tags ct
+          ON ct.id = lt.tag_id
+        WHERE lt.lead_id = l.id
+      ) tags ON TRUE
       ${whereClause}
       ORDER BY COALESCE(l.next_followup_at, l.last_activity_at, l.updated_at) DESC NULLS LAST, l.id DESC
       LIMIT $${params.length}
@@ -519,6 +797,10 @@ async function updateLead({
     assign("loss_reason", patch.lossReason || null);
   }
 
+  if (Object.prototype.hasOwnProperty.call(patch, "interestSummary")) {
+    assign("interest_summary", normalizeText(patch.interestSummary));
+  }
+
   if (Object.prototype.hasOwnProperty.call(patch, "stageCode")) {
     if (!patch.stageCode) {
       assign("sales_stage_id", null);
@@ -548,12 +830,66 @@ async function updateLead({
     Object.prototype.hasOwnProperty.call(patch, "ownerName") ||
     Object.prototype.hasOwnProperty.call(patch, "ownerEmail")
   ) {
-    const ownerUserId = await resolveOrCreateCrmUser({
-      externalRef: patch.ownerExternalRef ?? current.owner?.externalRef ?? null,
-      fullName: patch.ownerName ?? current.owner?.fullName ?? null,
-      email: patch.ownerEmail ?? null,
-    });
-    assign("owner_user_id", ownerUserId);
+    const ownerExternalRef = normalizeText(
+      Object.prototype.hasOwnProperty.call(patch, "ownerExternalRef")
+        ? patch.ownerExternalRef
+        : current.owner?.externalRef
+    );
+    const ownerName = normalizeText(
+      Object.prototype.hasOwnProperty.call(patch, "ownerName")
+        ? patch.ownerName
+        : current.owner?.fullName
+    );
+    const ownerEmail = normalizeText(
+      Object.prototype.hasOwnProperty.call(patch, "ownerEmail")
+        ? patch.ownerEmail
+        : null
+    );
+
+    if (!ownerExternalRef && !ownerName && !ownerEmail) {
+      assign("owner_user_id", null);
+    } else {
+      const ownerUserId = await resolveOrCreateCrmUser({
+        externalRef: ownerExternalRef,
+        fullName: ownerName,
+        email: ownerEmail,
+      });
+      assign("owner_user_id", ownerUserId);
+    }
+  }
+
+  if (
+    current.contactId &&
+    (
+      Object.prototype.hasOwnProperty.call(patch, "contactName") ||
+      Object.prototype.hasOwnProperty.call(patch, "contactPhone")
+    )
+  ) {
+    const contactUpdates = [];
+    const contactParams = [];
+
+    if (Object.prototype.hasOwnProperty.call(patch, "contactName")) {
+      contactParams.push(normalizeText(patch.contactName));
+      contactUpdates.push(`nombre = $${contactParams.length}`);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(patch, "contactPhone")) {
+      contactParams.push(normalizeText(patch.contactPhone));
+      contactUpdates.push(`telefono = $${contactParams.length}`);
+    }
+
+    if (contactUpdates.length) {
+      contactParams.push(current.contactId);
+
+      await db.query(
+        `
+          UPDATE public.clientes_floreria
+          SET ${contactUpdates.join(", ")}
+          WHERE id = $${contactParams.length}
+        `,
+        contactParams
+      );
+    }
   }
 
   if (!updates.length) {
@@ -1520,6 +1856,9 @@ module.exports = {
   findLeadByIdForOwner,
   findLeadByConversationId,
   ensureLeadByConversationId,
+  listTags,
+  createTag,
+  setLeadTags,
   listLeads,
   updateLead,
   createLeadTask,
