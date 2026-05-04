@@ -21,6 +21,34 @@ function parseJsonList(value) {
 function mapConversation(row) {
   const controlOwner = row.control_owner || "bot";
   const botPaused = Boolean(row.bot_paused);
+  const sentiment =
+    row.sentiment_polarity
+      ? {
+          id: row.sentiment_id ? Number(row.sentiment_id) : null,
+          conversationId: Number(row.id),
+          leadId: row.sentiment_lead_id ? Number(row.sentiment_lead_id) : null,
+          messageId: row.sentiment_message_id ? Number(row.sentiment_message_id) : null,
+          polarity: row.sentiment_polarity,
+          emotion: row.sentiment_emotion || null,
+          score:
+            row.sentiment_score === null || row.sentiment_score === undefined
+              ? null
+              : Number(row.sentiment_score),
+          intensity:
+            row.sentiment_intensity === null || row.sentiment_intensity === undefined
+              ? null
+              : Number(row.sentiment_intensity),
+          confidence:
+            row.sentiment_confidence === null || row.sentiment_confidence === undefined
+              ? null
+              : Number(row.sentiment_confidence),
+          suggestedBotAction: row.sentiment_suggested_bot_action || null,
+          reason: row.sentiment_reason || null,
+          source: row.sentiment_source || null,
+          model: row.sentiment_model || null,
+          createdAt: serializeDbTimestamp(row.sentiment_created_at),
+        }
+      : null;
 
   return {
     id: Number(row.id),
@@ -74,6 +102,7 @@ function mapConversation(row) {
             return [];
           }
         })(),
+    sentiment,
     objections: Array.isArray(row.lead_objections_json)
       ? row.lead_objections_json
       : (() => {
@@ -121,6 +150,9 @@ function buildFilters({
       `l.priority ILIKE $${index}`,
       `l.interest_summary ILIKE $${index}`,
       `l.next_action ILIKE $${index}`,
+      `latest_sentiment.polarity ILIKE $${index}`,
+      `latest_sentiment.emotion ILIKE $${index}`,
+      `latest_sentiment.reason ILIKE $${index}`,
       `EXISTS (
         SELECT 1
         FROM public.lead_tags search_lead_tag
@@ -243,6 +275,19 @@ async function listConversations({
         l.ai_score AS lead_ai_score,
         l.ai_score_reasons_json AS lead_ai_score_reasons_json,
         l.objections_json AS lead_objections_json,
+        latest_sentiment.id AS sentiment_id,
+        latest_sentiment.lead_id AS sentiment_lead_id,
+        latest_sentiment.message_id AS sentiment_message_id,
+        latest_sentiment.polarity AS sentiment_polarity,
+        latest_sentiment.emotion AS sentiment_emotion,
+        latest_sentiment.score AS sentiment_score,
+        latest_sentiment.intensity AS sentiment_intensity,
+        latest_sentiment.confidence AS sentiment_confidence,
+        latest_sentiment.suggested_bot_action AS sentiment_suggested_bot_action,
+        latest_sentiment.reason AS sentiment_reason,
+        latest_sentiment.source AS sentiment_source,
+        latest_sentiment.model AS sentiment_model,
+        latest_sentiment.created_at AS sentiment_created_at,
         ss.code AS sales_stage_code,
         ss.name AS sales_stage_name,
         owner.external_ref AS lead_owner_external_ref,
@@ -284,6 +329,26 @@ async function listConversations({
         ON ss.id = l.sales_stage_id
       LEFT JOIN public.crm_user owner
         ON owner.id = l.owner_user_id
+      LEFT JOIN LATERAL (
+        SELECT
+          sc.id,
+          sc.lead_id,
+          sc.message_id,
+          sc.polarity,
+          sc.emotion,
+          sc.score,
+          sc.intensity,
+          sc.confidence,
+          sc.suggested_bot_action,
+          sc.reason,
+          sc.source,
+          sc.model,
+          sc.created_at
+        FROM public.sentimiento_conversacion sc
+        WHERE sc.conversation_id = c.id
+        ORDER BY sc.created_at DESC, sc.id DESC
+        LIMIT 1
+      ) AS latest_sentiment ON TRUE
       LEFT JOIN LATERAL (
         SELECT COALESCE(
           json_agg(
@@ -364,6 +429,19 @@ async function findConversationById(conversationId, agentId = null, ownerExterna
         l.ai_score AS lead_ai_score,
         l.ai_score_reasons_json AS lead_ai_score_reasons_json,
         l.objections_json AS lead_objections_json,
+        latest_sentiment.id AS sentiment_id,
+        latest_sentiment.lead_id AS sentiment_lead_id,
+        latest_sentiment.message_id AS sentiment_message_id,
+        latest_sentiment.polarity AS sentiment_polarity,
+        latest_sentiment.emotion AS sentiment_emotion,
+        latest_sentiment.score AS sentiment_score,
+        latest_sentiment.intensity AS sentiment_intensity,
+        latest_sentiment.confidence AS sentiment_confidence,
+        latest_sentiment.suggested_bot_action AS sentiment_suggested_bot_action,
+        latest_sentiment.reason AS sentiment_reason,
+        latest_sentiment.source AS sentiment_source,
+        latest_sentiment.model AS sentiment_model,
+        latest_sentiment.created_at AS sentiment_created_at,
         ss.code AS sales_stage_code,
         ss.name AS sales_stage_name,
         owner.external_ref AS lead_owner_external_ref,
@@ -405,6 +483,26 @@ async function findConversationById(conversationId, agentId = null, ownerExterna
         ON ss.id = l.sales_stage_id
       LEFT JOIN public.crm_user owner
         ON owner.id = l.owner_user_id
+      LEFT JOIN LATERAL (
+        SELECT
+          sc.id,
+          sc.lead_id,
+          sc.message_id,
+          sc.polarity,
+          sc.emotion,
+          sc.score,
+          sc.intensity,
+          sc.confidence,
+          sc.suggested_bot_action,
+          sc.reason,
+          sc.source,
+          sc.model,
+          sc.created_at
+        FROM public.sentimiento_conversacion sc
+        WHERE sc.conversation_id = c.id
+        ORDER BY sc.created_at DESC, sc.id DESC
+        LIMIT 1
+      ) AS latest_sentiment ON TRUE
       LEFT JOIN LATERAL (
         SELECT COALESCE(
           json_agg(

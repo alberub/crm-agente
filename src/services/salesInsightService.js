@@ -2,6 +2,10 @@ const {
   findLeadByConversationId,
   upsertLeadSalesSignals,
 } = require("../repositories/leadRepository");
+const {
+  findLatestSentimentByConversationId,
+  saveSentimentAnalysis,
+} = require("../repositories/conversationSentimentRepository");
 
 function normalize(value) {
   return String(value || "")
@@ -218,6 +222,173 @@ function pushObjection(objections, value) {
 
 function includesAny(source, patterns) {
   return patterns.some((pattern) => source.includes(pattern));
+}
+
+function hasAny(source, patterns) {
+  return patterns.some((pattern) => source.includes(pattern));
+}
+
+function resolveCustomerSentiment({ recentMessages, salesStageCode }) {
+  const customerMessages = (recentMessages || [])
+    .filter((message) => normalize(message.rol) === "user")
+    .map((message) => ({
+      id: Number(message.id),
+      text: normalize(message.mensaje),
+      rawText: String(message.mensaje || "").trim(),
+    }))
+    .filter((message) => message.text);
+  const latestCustomerMessage = customerMessages.at(-1) || null;
+  const customerCorpus = customerMessages.map((message) => message.text).join(" ");
+
+  if (!latestCustomerMessage) {
+    return {
+      messageId: null,
+      polarity: "neutral",
+      emotion: "sin_senal",
+      score: 0,
+      intensity: 0,
+      confidence: 0.4,
+      suggestedBotAction: "continue",
+      reason: "Aun no hay mensajes del cliente para inferir sentimiento.",
+    };
+  }
+
+  const latestText = latestCustomerMessage.text;
+  const negativeStrong = [
+    "no me escriban",
+    "dejen de escribir",
+    "no insistan",
+    "no molesten",
+    "ya dije que no",
+    "estoy molesto",
+    "estoy enojado",
+    "me moleste",
+    "me enoje",
+    "pesimo",
+    "mala atencion",
+    "mal servicio",
+    "queja",
+    "reclamo",
+    "cancelar",
+    "cancela",
+    "spam",
+  ];
+  const negativeSoft = [
+    "no gracias",
+    "muy caro",
+    "caro",
+    "lo voy a pensar",
+    "te aviso",
+    "despues",
+    "luego",
+    "no me interesa",
+    "no quiero",
+    "no puedo",
+    "no era",
+    "tarde",
+    "no respondieron",
+  ];
+  const confused = [
+    "no entiendo",
+    "duda",
+    "confundido",
+    "como funciona",
+    "cual es",
+    "no se",
+  ];
+  const positiveStrong = [
+    "perfecto",
+    "excelente",
+    "me encanta",
+    "lo quiero",
+    "confirmo",
+    "agendo",
+    "gracias",
+    "muchas gracias",
+    "sale",
+    "ok",
+    "si todo",
+  ];
+
+  if (hasAny(latestText, negativeStrong) || hasAny(customerCorpus, negativeStrong)) {
+    return {
+      messageId: latestCustomerMessage.id,
+      polarity: "negative",
+      emotion: "molesto",
+      score: -0.85,
+      intensity: 0.9,
+      confidence: 0.86,
+      suggestedBotAction: "human_review",
+      reason: "El cliente muestra molestia, rechazo fuerte o una posible queja; conviene revisar antes de automatizar seguimiento.",
+    };
+  }
+
+  if (hasAny(latestText, negativeSoft) || hasAny(customerCorpus, negativeSoft)) {
+    const isPriceObjection = hasAny(customerCorpus, ["caro", "muy caro", "precio"]);
+
+    return {
+      messageId: latestCustomerMessage.id,
+      polarity: "negative",
+      emotion: isPriceObjection ? "objecion_precio" : "rechazo_suave",
+      score: isPriceObjection ? -0.48 : -0.58,
+      intensity: isPriceObjection ? 0.58 : 0.68,
+      confidence: 0.78,
+      suggestedBotAction: "soft_followup",
+      reason: isPriceObjection
+        ? "Hay objecion de precio; el seguimiento debe ser suave y evitar insistir con mas presion."
+        : "El cliente muestra rechazo o postergacion; conviene bajar la intensidad del seguimiento.",
+    };
+  }
+
+  if (hasAny(latestText, confused)) {
+    return {
+      messageId: latestCustomerMessage.id,
+      polarity: "neutral",
+      emotion: "confundido",
+      score: -0.12,
+      intensity: 0.48,
+      confidence: 0.72,
+      suggestedBotAction: "continue",
+      reason: "El cliente parece necesitar aclaracion; conviene responder la duda antes de empujar cierre.",
+    };
+  }
+
+  if (salesStageCode === "pedido_confirmado" || salesStageCode === "entregado") {
+    return {
+      messageId: latestCustomerMessage.id,
+      polarity: "positive",
+      emotion: "compra_confirmada",
+      score: 0.82,
+      intensity: 0.78,
+      confidence: 0.84,
+      suggestedBotAction: "continue",
+      reason: "La conversacion ya refleja compra o entrega confirmada.",
+    };
+  }
+
+  if (hasAny(latestText, positiveStrong)) {
+    return {
+      messageId: latestCustomerMessage.id,
+      polarity: "positive",
+      emotion: "receptivo",
+      score: 0.62,
+      intensity: 0.58,
+      confidence: 0.74,
+      suggestedBotAction: "continue",
+      reason: "El ultimo mensaje del cliente sugiere apertura o avance positivo.",
+    };
+  }
+
+  return {
+    messageId: latestCustomerMessage.id,
+    polarity: "neutral",
+    emotion: "sin_senal_clara",
+    score: 0,
+    intensity: 0.28,
+    confidence: 0.62,
+    suggestedBotAction: "continue",
+    reason: "No hay senales emocionales fuertes en los mensajes recientes del cliente.",
+  };
 }
 
 function scoreMessages({ conversation, context, latestOrder, recentMessages }) {
@@ -492,6 +663,11 @@ async function buildConversationSalesSnapshot({
   const persistedLead = conversation?.id
     ? await findLeadByConversationId(conversation.id)
     : null;
+  const sentimentSnapshot = resolveCustomerSentiment({
+    recentMessages,
+    salesStageCode: snapshot.salesStageCode,
+  });
+  let currentSentiment = conversation?.sentiment || null;
   const resolvedSnapshot = {
     aiScore:
       typeof persistedLead?.aiScore === "number" ? persistedLead.aiScore : snapshot.aiScore,
@@ -510,6 +686,7 @@ async function buildConversationSalesSnapshot({
       typeof persistedLead?.estimatedValue === "number"
         ? persistedLead.estimatedValue
         : snapshot.estimatedValue,
+    sentiment: currentSentiment || sentimentSnapshot,
   };
 
   if (persist) {
@@ -527,6 +704,17 @@ async function buildConversationSalesSnapshot({
       lastActivityAt: conversation.ultimaInteraccion,
       status: conversation.activa ? "active" : "archived",
     });
+
+    const leadAfterPersist = await findLeadByConversationId(conversation.id);
+    currentSentiment = await saveSentimentAnalysis({
+      conversationId: conversation.id,
+      leadId: leadAfterPersist?.id || persistedLead?.id || null,
+      ...sentimentSnapshot,
+    });
+    resolvedSnapshot.sentiment = currentSentiment || sentimentSnapshot;
+  } else if (!currentSentiment && conversation?.id) {
+    currentSentiment = await findLatestSentimentByConversationId(conversation.id);
+    resolvedSnapshot.sentiment = currentSentiment || sentimentSnapshot;
   }
 
   return resolvedSnapshot;
