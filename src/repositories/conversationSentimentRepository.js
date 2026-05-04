@@ -120,6 +120,7 @@ async function saveSentimentAnalysis({
         model
       )
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      ON CONFLICT DO NOTHING
       RETURNING
         id,
         conversation_id,
@@ -151,6 +152,9 @@ async function saveSentimentAnalysis({
       model,
     ]
   );
+  const saved = result.rows[0]
+    ? mapSentiment(result.rows[0])
+    : await findLatestSentimentByConversationId(conversationId);
 
   if (leadId) {
     await db.query(
@@ -164,7 +168,7 @@ async function saveSentimentAnalysis({
     );
   }
 
-  return mapSentiment(result.rows[0]);
+  return saved;
 }
 
 module.exports = {

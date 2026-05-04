@@ -17,10 +17,14 @@ async function listMessagesByConversationId(conversationId, limit = 100) {
   const result = await db.query(
     `
       SELECT id, conversacion_id, rol, mensaje, fecha
-      FROM public.mensajes
-      WHERE conversacion_id = $1
+      FROM (
+        SELECT id, conversacion_id, rol, mensaje, fecha
+        FROM public.mensajes
+        WHERE conversacion_id = $1
+        ORDER BY fecha DESC, id DESC
+        LIMIT $2
+      ) recent_messages
       ORDER BY fecha ASC, id ASC
-      LIMIT $2
     `,
     [conversationId, safeLimit]
   );

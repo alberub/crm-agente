@@ -228,32 +228,73 @@ function hasAny(source, patterns) {
   return patterns.some((pattern) => source.includes(pattern));
 }
 
-function resolveCustomerSentiment({ recentMessages, salesStageCode }) {
-  const customerMessages = (recentMessages || [])
-    .filter((message) => normalize(message.rol) === "user")
-    .map((message) => ({
+function isCustomerMessage(message) {
+  return normalize(message?.rol) === "user";
+}
+
+function isBotMessage(message) {
+  return normalize(message?.rol) === "bot";
+}
+
+function normalizeCustomerMessages(messages) {
+  return (messages || [])
+    .map((message, index) => ({
       id: Number(message.id),
+      index,
+      role: normalize(message.rol),
       text: normalize(message.mensaje),
       rawText: String(message.mensaje || "").trim(),
     }))
-    .filter((message) => message.text);
+    .filter((message) => message.role === "user" && message.text);
+}
+
+function findLatestPurchaseMilestoneIndex(messages) {
+  let latestIndex = -1;
+
+  for (const [index, message] of (messages || []).entries()) {
+    if (isBotMessage(message) && hasPurchaseConfirmationText(message.mensaje)) {
+      latestIndex = index;
+    }
+  }
+
+  return latestIndex;
+}
+
+function buildPurchaseConfirmedSentiment(messageId = null) {
+  return {
+    messageId,
+    polarity: "positive",
+    emotion: "compra_confirmada",
+    score: 0.82,
+    intensity: 0.72,
+    confidence: 0.84,
+    suggestedBotAction: "continue",
+    reason: "La compra fue confirmada y no hay mensajes negativos posteriores del cliente.",
+  };
+}
+
+function analyzeCustomerSentimentWindow(customerMessages, { fallbackToPurchaseConfirmed = false } = {}) {
   const latestCustomerMessage = customerMessages.at(-1) || null;
-  const customerCorpus = customerMessages.map((message) => message.text).join(" ");
+  const activeMessages = customerMessages.slice(-5);
+  const activeCorpus = activeMessages.map((message) => message.text).join(" ");
 
   if (!latestCustomerMessage) {
-    return {
-      messageId: null,
-      polarity: "neutral",
-      emotion: "sin_senal",
-      score: 0,
-      intensity: 0,
-      confidence: 0.4,
-      suggestedBotAction: "continue",
-      reason: "Aun no hay mensajes del cliente para inferir sentimiento.",
-    };
+    return fallbackToPurchaseConfirmed
+      ? buildPurchaseConfirmedSentiment(null)
+      : {
+          messageId: null,
+          polarity: "neutral",
+          emotion: "sin_senal",
+          score: 0,
+          intensity: 0,
+          confidence: 0.4,
+          suggestedBotAction: "continue",
+          reason: "Aun no hay mensajes del cliente para inferir sentimiento.",
+        };
   }
 
   const latestText = latestCustomerMessage.text;
+  const messageId = latestCustomerMessage.id;
   const negativeStrong = [
     "no me escriban",
     "dejen de escribir",
@@ -310,24 +351,24 @@ function resolveCustomerSentiment({ recentMessages, salesStageCode }) {
     "si todo",
   ];
 
-  if (hasAny(latestText, negativeStrong) || hasAny(customerCorpus, negativeStrong)) {
+  if (hasAny(latestText, negativeStrong) || hasAny(activeCorpus, negativeStrong)) {
     return {
-      messageId: latestCustomerMessage.id,
+      messageId,
       polarity: "negative",
       emotion: "molesto",
       score: -0.85,
       intensity: 0.9,
       confidence: 0.86,
       suggestedBotAction: "human_review",
-      reason: "El cliente muestra molestia, rechazo fuerte o una posible queja; conviene revisar antes de automatizar seguimiento.",
+      reason: "El cliente muestra molestia, rechazo fuerte o una posible queja en los mensajes recientes.",
     };
   }
 
-  if (hasAny(latestText, negativeSoft) || hasAny(customerCorpus, negativeSoft)) {
-    const isPriceObjection = hasAny(customerCorpus, ["caro", "muy caro", "precio"]);
+  if (hasAny(latestText, negativeSoft) || hasAny(activeCorpus, negativeSoft)) {
+    const isPriceObjection = hasAny(activeCorpus, ["caro", "muy caro", "precio"]);
 
     return {
-      messageId: latestCustomerMessage.id,
+      messageId,
       polarity: "negative",
       emotion: isPriceObjection ? "objecion_precio" : "rechazo_suave",
       score: isPriceObjection ? -0.48 : -0.58,
@@ -335,14 +376,14 @@ function resolveCustomerSentiment({ recentMessages, salesStageCode }) {
       confidence: 0.78,
       suggestedBotAction: "soft_followup",
       reason: isPriceObjection
-        ? "Hay objecion de precio; el seguimiento debe ser suave y evitar insistir con mas presion."
-        : "El cliente muestra rechazo o postergacion; conviene bajar la intensidad del seguimiento.",
+        ? "Hay objecion reciente de precio; el seguimiento debe ser suave y sin mas presion."
+        : "El cliente muestra rechazo o postergacion en los mensajes recientes.",
     };
   }
 
   if (hasAny(latestText, confused)) {
     return {
-      messageId: latestCustomerMessage.id,
+      messageId,
       polarity: "neutral",
       emotion: "confundido",
       score: -0.12,
@@ -353,22 +394,9 @@ function resolveCustomerSentiment({ recentMessages, salesStageCode }) {
     };
   }
 
-  if (salesStageCode === "pedido_confirmado" || salesStageCode === "entregado") {
-    return {
-      messageId: latestCustomerMessage.id,
-      polarity: "positive",
-      emotion: "compra_confirmada",
-      score: 0.82,
-      intensity: 0.78,
-      confidence: 0.84,
-      suggestedBotAction: "continue",
-      reason: "La conversacion ya refleja compra o entrega confirmada.",
-    };
-  }
-
   if (hasAny(latestText, positiveStrong)) {
     return {
-      messageId: latestCustomerMessage.id,
+      messageId,
       polarity: "positive",
       emotion: "receptivo",
       score: 0.62,
@@ -379,16 +407,48 @@ function resolveCustomerSentiment({ recentMessages, salesStageCode }) {
     };
   }
 
-  return {
-    messageId: latestCustomerMessage.id,
-    polarity: "neutral",
-    emotion: "sin_senal_clara",
-    score: 0,
-    intensity: 0.28,
-    confidence: 0.62,
-    suggestedBotAction: "continue",
-    reason: "No hay senales emocionales fuertes en los mensajes recientes del cliente.",
-  };
+  return fallbackToPurchaseConfirmed
+    ? buildPurchaseConfirmedSentiment(messageId)
+    : {
+        messageId,
+        polarity: "neutral",
+        emotion: "sin_senal_clara",
+        score: 0,
+        intensity: 0.28,
+        confidence: 0.62,
+        suggestedBotAction: "continue",
+        reason: "No hay senales emocionales fuertes en los mensajes recientes del cliente.",
+      };
+}
+
+function resolveCustomerSentiment({ recentMessages, salesStageCode }) {
+  const normalizedMessages = Array.isArray(recentMessages) ? recentMessages : [];
+  const customerMessages = normalizeCustomerMessages(normalizedMessages);
+  const purchaseMilestoneIndex = findLatestPurchaseMilestoneIndex(normalizedMessages);
+  const isClosedPurchase = salesStageCode === "pedido_confirmado" || salesStageCode === "entregado";
+
+  if (purchaseMilestoneIndex >= 0) {
+    const postPurchaseCustomerMessages = customerMessages.filter(
+      (message) => message.index > purchaseMilestoneIndex
+    );
+
+    if (!postPurchaseCustomerMessages.length) {
+      const previousCustomerMessage = customerMessages.at(-1) || null;
+      return buildPurchaseConfirmedSentiment(previousCustomerMessage?.id || null);
+    }
+
+    return analyzeCustomerSentimentWindow(postPurchaseCustomerMessages, {
+      fallbackToPurchaseConfirmed: true,
+    });
+  }
+
+  if (isClosedPurchase) {
+    return analyzeCustomerSentimentWindow(customerMessages, {
+      fallbackToPurchaseConfirmed: true,
+    });
+  }
+
+  return analyzeCustomerSentimentWindow(customerMessages);
 }
 
 function scoreMessages({ conversation, context, latestOrder, recentMessages }) {
